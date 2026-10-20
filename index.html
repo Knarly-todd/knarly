@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Knarly</title>
 <meta name="theme-color" content="#0E0F10" media="(prefers-color-scheme: light)">
+<meta name="description" content="Stop letting algorithms decide what you listen to. Connect Spotify and take control of your music discovery.">
 <meta name="theme-color" content="#141618" media="(prefers-color-scheme: dark)">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -17,7 +18,7 @@
 <style>
 :root{
   --bg:#D9DAD5; --panel:#ECEDE9; --ink:#1B1F23; --muted:#4C5258; --line:#B5B8B1; --rule:#C9CBC5;
-  --accent:#A35300; --glass:#15120E; --glow:#FFB54A; --glowdim:#6B4F26; --glowtext:#E9D9BE; --needle:#FF5A36;
+  --accent:#A35300; --glass:#15120E; --glow:#00E5FF; --glowdim:#0F5561; --glowtext:#BFF3FA; --needle:#FFFFFF;
   --key:#F7F7F4; --keyshadow:#9A9D96; --knob:#C9CAC5; --knobedge:#8E918B; --tickc:#7D817B;
   --pp-bg:#1B1F23; --pp-fg:#ECEDE9; --spotify:#1DB954;
   color-scheme:light;
@@ -28,7 +29,7 @@
 @media (prefers-color-scheme:dark){
   :root:not([data-theme="light"]){
     --bg:#141618; --panel:#1F2225; --ink:#ECE9E3; --muted:#9BA1A7; --line:#363B40; --rule:#2C3135;
-    --accent:#FFB54A; --glass:#0A0907; --glowdim:#5E4626;
+    --accent:#00E5FF; --glass:#0A0907; --glowdim:#0F5561;
     --key:#2A2E32; --keyshadow:#08090A; --knob:#3A3F44; --knobedge:#1A1D20; --tickc:#9BA1A7;
     --pp-bg:#ECE9E3; --pp-fg:#141618;
     color-scheme:dark;
@@ -243,21 +244,24 @@ dialog::backdrop{background:rgba(10,10,10,.55)}
   .top{gap:8px}
   .top .btn{padding:0 11px;font-size:14px}
   .status{order:5;width:100%}
-  .brand small{display:none}
+  .logo{height:44px}
+  .tag{font-size:10px;letter-spacing:.16em}
   .brand{width:100%}
 }
 /* ===== Car Radio look: dark panel, amber display, labeled presets, sliders ===== */
 :root:not([data-theme="none"]){
   --bg:#0E0F10; --panel:#16181A; --ink:#E8E6E1; --muted:#9BA1A7; --line:#2C3135; --rule:#24282C;
-  --accent:#FFB54A; --glass:#1A1408; --glow:#FFB54A; --glowtext:#FFD9A0; --needle:#FF5A36;
+  --accent:#00E5FF; --glass:#04161A; --glow:#00E5FF; --glowtext:#B8F6FF; --needle:#FFFFFF;
   --key:#1C1F22; --keyshadow:#050606; --knob:#2A2E32; --knobedge:#0B0C0D; --tickc:#3A3F44;
-  --pp-bg:#FFB54A; --pp-fg:#0E0F10; color-scheme:dark;
+  --pp-bg:#00E5FF; --pp-fg:#0E0F10; color-scheme:dark;
 }
 .mono{font-family:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace}
-.brand b{letter-spacing:.06em;text-transform:uppercase}
+.logo{display:block;height:58px;width:auto}
+.tag{display:block;margin-top:6px;font-size:12px;letter-spacing:.22em;text-transform:uppercase;color:var(--ink);font-weight:600}
+.tag .cy{color:#00E5FF}
 .face{background:transparent;border:0;padding:0}
-.glass.lcd{height:auto;padding:14px 16px 12px;border:2px solid #2A2116;border-radius:14px;box-shadow:inset 0 0 30px rgba(255,170,60,.12);overflow:hidden}
-.lcd *{color:var(--glow);text-shadow:0 0 8px rgba(255,181,74,.45)}
+.glass.lcd{height:auto;padding:14px 16px 12px;border:2px solid #0E3138;border-radius:14px;box-shadow:inset 0 0 30px rgba(0,229,255,.12);overflow:hidden}
+.lcd *{color:var(--glow);text-shadow:0 0 8px rgba(0,229,255,.45)}
 .lrow{display:flex;justify-content:space-between;gap:10px;font-size:14px;font-weight:600}
 .lbig{font-size:clamp(28px,8vw,44px);font-weight:600;letter-spacing:-.02em;line-height:1.1;margin:4px 0 2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-transform:uppercase}
 .lsong{font-size:13px;opacity:.85;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-transform:uppercase}
@@ -267,7 +271,7 @@ body.playing .meter i{animation:lvl .9s ease-in-out infinite alternate}
 @keyframes lvl{from{height:12%}to{height:95%}}
 .tunelabel{display:none}
 .slider{margin-top:10px}
-.slider::-webkit-slider-thumb{background:var(--glow);border-color:var(--glow);box-shadow:0 0 10px rgba(255,181,74,.5)}
+.slider::-webkit-slider-thumb{background:var(--glow);border-color:var(--glow);box-shadow:0 0 10px rgba(0,229,255,.5)}
 .slider::-moz-range-thumb{background:var(--glow);border-color:var(--glow)}
 .presets{grid-template-columns:repeat(5,minmax(0,1fr))}
 .preset{min-height:62px;border-radius:10px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;padding:4px 2px}
@@ -285,7 +289,7 @@ body.playing .meter i{animation:lvl .9s ease-in-out infinite alternate}
 .allbtn{grid-column:1 / -1;min-height:52px;flex-direction:row;gap:12px;border-style:dashed}
 .allbtn b{letter-spacing:.08em}
 .allbtn span{font-size:12px}
-.allbtn[aria-pressed="true"]{border-style:solid;background:#241B0D}
+.allbtn[aria-pressed="true"]{border-style:solid;background:#062A31}
 body.allmode #specCol{opacity:.55}
 .frange:disabled{cursor:not-allowed}
 /* Sliders everywhere, no knobs */
@@ -293,7 +297,7 @@ body.allmode #specCol{opacity:.55}
 .fader{display:block!important}
 .side{align-items:stretch;text-align:left;background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:12px 14px}
 .readout{border-top:0;padding-top:2px;font-size:12px}
-.frange::-webkit-slider-thumb{background:var(--knob);border-color:var(--glow);box-shadow:0 0 8px rgba(255,181,74,.35), inset 0 0 0 7px var(--knob), inset 0 0 0 10px var(--glow)}
+.frange::-webkit-slider-thumb{background:var(--knob);border-color:var(--glow);box-shadow:0 0 8px rgba(0,229,255,.35), inset 0 0 0 7px var(--knob), inset 0 0 0 10px var(--glow)}
 .card{border-radius:16px}
 .art{background:#3B2A22}
 /* Lineup */
@@ -332,7 +336,7 @@ body.allmode #specCol{opacity:.55}
 <body>
 <div class="wrap">
   <header class="top">
-    <div class="brand"><b>Knarly</b><small>Ten genre stations from your Spotify library</small></div>
+    <div class="brand"><img class="logo" src="logo-256.png" alt="Knarly"><small class="tag">No algo. <span class="cy">Only rhythm.</span></small></div>
     <button class="status statusbtn" id="status" aria-label="Choose where Spotify plays"></button>
     <button class="btn" id="streamsBtn">Streams</button>
     <button class="btn" id="libBtn">Library<span class="wide"> &amp; stations</span></button>
@@ -398,6 +402,9 @@ body.allmode #specCol{opacity:.55}
 <dialog id="login" aria-labelledby="loginTitle">
   <div class="dlg">
     <h2 id="loginTitle">Connect Spotify</h2>
+    <h3 style="font-stretch:125%;font-size:20px;margin:0 0 4px">Your music. Your rules.</h3>
+    <p style="font-weight:700;color:var(--ink);font-size:16px;margin:0 0 8px">Stop letting algorithms decide what you listen to.</p>
+    <p>Connect your Spotify account and take control of your music discovery. Explore different genres, venture into neighboring styles, dig into lesser-known tracks, or turn up the hits. You decide where the music goes.</p>
     <p>Knarly picks the songs and the Spotify app on your phone or computer plays them. It needs Spotify Premium.</p>
     <p id="fileWarn" class="msg err" hidden></p>
     <ol>
@@ -1563,7 +1570,7 @@ function renderNow() {
   }
   const head = `<div class="on">${esc(stationLabel())}${s && (st.all || !onGenre(s, st.genre)) ? ` (playing ${esc(s.genre)})` : ''}</div>`;
   if (!s) {
-    card.innerHTML = `<div class="meta">${head}<div class="t">Ready when you are</div>
+    card.innerHTML = `<div class="meta">${head}<div class="t">Your music. Your rules.</div>
       <p class="muted" style="margin:0">${mixFor(st).pool.length.toLocaleString()} songs in rotation. Press play next to the tuner to start.</p></div>`;
     return;
   }
