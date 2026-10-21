@@ -210,6 +210,14 @@ dialog::backdrop{background:rgba(10,10,10,.55)}
 .devlist{display:grid;gap:8px;margin-top:8px}
 .devlist button{text-align:left;justify-content:flex-start;display:flex;align-items:center;gap:10px}
 .devlist button[aria-pressed="true"]{border-color:var(--accent);box-shadow:0 2px 0 var(--accent)}
+.devh{font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.12em;margin:14px 0 4px;font-weight:700}
+.devbtn{display:flex!important;align-items:center;gap:12px;text-align:left;justify-content:flex-start;min-height:56px;width:100%}
+.devbtn .di{font-size:22px;flex:none;width:30px;text-align:center}
+.devbtn .dn{display:flex;flex-direction:column;min-width:0}
+.devbtn .dn b{font-weight:600}
+.devbtn .dn span{font-size:13px}
+.devbtn:disabled{opacity:.55}
+.volrow{margin:6px 0 4px;padding:10px 12px;border:1px solid var(--line);border-radius:12px}
 .linkish{color:var(--accent)}
 @media (max-width:1000px){ .face{grid-template-columns:1fr 1fr;grid-template-areas:"tune tune" "spec pop"} }
 /* Phones: knobs become thumb-friendly sliders, stacked under the tuner */
@@ -336,7 +344,7 @@ body.allmode #specCol{opacity:.55}
 <body>
 <div class="wrap">
   <header class="top">
-    <div class="brand"><img class="logo" src="logo-256.png" alt="Knarly"><small class="tag">No algo. <span class="cy">Only rhythm.</span></small></div>
+    <div class="brand"><img class="logo" src="logo-256.png" alt="Knarly"><small class="tag">No algos. <span class="cy">You pick the rhythm.</span></small></div>
     <button class="status statusbtn" id="status" aria-label="Choose where Spotify plays"></button>
     <button class="btn" id="streamsBtn">Streams</button>
     <button class="btn" id="libBtn">Library<span class="wide"> &amp; stations</span></button>
@@ -428,12 +436,16 @@ body.allmode #specCol{opacity:.55}
 <dialog id="devices" aria-labelledby="devTitle">
   <div class="dlg">
     <h2 id="devTitle">Where Spotify plays</h2>
-    <p>Knarly sends songs to the Spotify app. If your device isn’t listed, open Spotify on it, play any song for a moment, then press Refresh.</p>
+    <p>Knarly sends songs to Spotify, which plays them on whichever speaker you choose. Sonos, Spotify Connect speakers and other devices show up here. Bluetooth speakers and car audio appear as the phone or car they’re connected to.</p>
+    <div id="devVol" class="volrow" hidden>
+      <div class="fhead"><span id="devVolName">Volume</span><b id="devVolVal"></b></div>
+      <input type="range" class="frange" id="devVolRange" min="0" max="100" step="1" aria-label="Volume on the chosen speaker">
+    </div>
     <div class="devlist" id="devList"></div>
     <div class="msg" id="devMsg" role="status"></div>
     <div class="row">
       <a class="btn" href="spotify:" style="display:inline-flex;align-items:center;text-decoration:none">Open Spotify</a>
-      <button class="btn" id="devRefresh">Refresh</button>
+      <button class="btn" id="devRefresh">Scan again</button>
       <button class="btn primary" id="devDone">Done</button>
     </div>
   </div>
@@ -1411,15 +1423,39 @@ async function openDevices() {
   if (!S.auth) { openLogin(); return; }
   $('#devices').showModal(); await renderDevices();
 }
+const DEV_GROUPS = [
+  ['Speakers', ['Speaker', 'CastAudio', 'AudioDongle', 'AVR']],
+  ['Phones and tablets', ['Smartphone', 'Tablet']],
+  ['Computers', ['Computer']],
+  ['Cars', ['Automobile']],
+  ['TVs and other', ['TV', 'CastVideo', 'STB', 'GameConsole']],
+];
+const DEV_ICON = { Speaker: '🔊', CastAudio: '🔊', AudioDongle: '🔊', AVR: '🔊', Smartphone: '📱', Tablet: '📱', Computer: '💻', Automobile: '🚗', TV: '📺', CastVideo: '📺', STB: '📺', GameConsole: '🎮' };
+let devList = [];
 async function renderDevices() {
-  const el = $('#devList'), m = $('#devMsg'); m.className = 'msg'; m.textContent = 'Looking for Spotify…';
+  const el = $('#devList'), m = $('#devMsg'); m.className = 'msg'; m.textContent = 'Looking for speakers…';
   try {
-    const list = await getDevices();
-    el.innerHTML = list.map(d => `<button class="btn" data-dev="${esc(d.id)}" data-name="${esc(d.name)}" data-type="${esc(d.type)}" aria-pressed="${R.device && R.device.id === d.id}">${esc(d.name)} <span class="muted">${esc(d.type)}${d.is_active ? ', playing now' : ''}</span></button>`).join('');
-    m.textContent = list.length ? 'Tap where you want to listen.' : 'No Spotify apps are open. Open Spotify on your phone or computer, play any song for a moment, then press Refresh.';
+    devList = await getDevices();
+    const chosenId = R.device && R.device.id;
+    const groups = DEV_GROUPS.map(([label, types]) => [label, devList.filter(d => types.includes(d.type) || (!types.length))])
+      .map(([label, list]) => [label, list]);
+    const other = devList.filter(d => !DEV_GROUPS.some(([, t]) => t.includes(d.type)));
+    if (other.length) groups.push(['Other', other]);
+    el.innerHTML = groups.filter(([, l]) => l.length).map(([label, list]) => `<h3 class="devh">${label}</h3>` + list.map(d => {
+      const tags = [d.is_active ? 'playing now' : '', d.id === chosenId ? 'chosen' : '', d.is_restricted ? 'can’t be controlled' : ''].filter(Boolean).join(', ');
+      return `<button class="btn devbtn" data-dev="${esc(d.id)}" data-name="${esc(d.name)}" data-type="${esc(d.type)}" data-vol="${d.volume_percent ?? ''}" aria-pressed="${d.id === chosenId}" ${d.is_restricted ? 'disabled' : ''}>
+        <span class="di" aria-hidden="true">${DEV_ICON[d.type] || '🎵'}</span><span class="dn"><b>${esc(d.name)}</b><span class="muted">${esc(d.type)}${tags ? ' · ' + tags : ''}</span></span></button>`;
+    }).join('')).join('');
+    const chosen = devList.find(d => d.id === chosenId);
+    const vol = $('#devVol');
+    if (chosen && chosen.volume_percent != null && !chosen.is_restricted) {
+      vol.hidden = false; $('#devVolName').textContent = `Volume on ${chosen.name}`; $('#devVolRange').value = chosen.volume_percent; $('#devVolVal').textContent = chosen.volume_percent + '%';
+    } else vol.hidden = true;
+    m.textContent = devList.length
+      ? 'Tap a speaker to send your music there. Bluetooth speakers are listed under the phone they’re connected to.'
+      : 'No speakers found. Open Spotify on the device you want, play any song for a moment, then press Scan again.';
   } catch (e) { m.textContent = e.message; m.classList.add('err'); }
 }
-
 async function connectFlow(fromRedirect) {
   S.autoStart = S.settings.autoplay;
   const msg = $('#loginMsg'), bar = $('#loadbar');
@@ -1785,6 +1821,13 @@ function bind() {
     S.settings.deviceName = b.dataset.name; LS.set('settings', S.settings); renderStatus();
     if (S.playing) { try { await api('/me/player', { method: 'PUT', body: JSON.stringify({ device_ids: [R.device.id], play: true }) }); } catch (err) { toast(err.message); } }
     renderDevices();
+  });
+  // Volume on the chosen speaker. Sent after you let go, so the slider stays smooth.
+  $('#devVolRange').addEventListener('input', e => { $('#devVolVal').textContent = e.target.value + '%'; });
+  $('#devVolRange').addEventListener('change', async e => {
+    if (!R.device) return;
+    try { await api(`/me/player/volume?device_id=${encodeURIComponent(R.device.id)}&volume_percent=${+e.target.value}`, { method: 'PUT' }); }
+    catch (err) { toast(err.message.includes('volume') ? 'This speaker doesn’t let Spotify change its volume. Use the speaker’s own controls or the Spotify app.' : err.message); }
   });
 
   $('#connectBtn').addEventListener('click', openLogin);
