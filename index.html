@@ -593,9 +593,10 @@ body.allmode #specCol{opacity:.55}
       <label>Very popular from <input type="number" id="tier4" min="0" step="1000"> plays</label>
       <label>Megastar from <input type="number" id="tier5" min="0" step="1000"> plays</label>
     </div>
-    <div class="row left" style="margin-top:10px"><button class="btn" id="lfmGo">Rate my library from Last.fm</button>
-      <button class="btn" id="lfmRecheck">Recheck every song</button>
-      <button class="btn" id="lfmGenres">Assign genres from Last.fm</button></div>
+    <div class="row left" style="margin-top:10px"><button class="btn primary" id="lfmUpdate">Update ratings &amp; genres</button></div>
+    <p class="msg" id="lfmStatus" style="margin-top:8px"></p>
+    <div class="row left" style="margin-top:4px"><button class="btn quiet" id="lfmRecheck" style="min-height:36px;font-size:13px">Recheck every song from scratch</button></div>
+    <div class="row left" style="margin-top:6px;gap:6px"><input type="text" id="lfmOne" placeholder="Refresh one artist or song" aria-label="Refresh one artist or song" style="flex:1 1 180px;min-height:36px"><button class="btn quiet" id="lfmOneGo" style="min-height:36px;font-size:13px">Refresh</button></div>
     <div class="msg" id="lfmMsg" role="status"></div>
 
     <h3>Play gaps</h3>
@@ -996,7 +997,7 @@ async function genresFromLastfm(report) {
   if (!key) { report('Add your Last.fm API key first.', true, true); return; }
   if (S.mode !== 'spotify') { report('Connect Spotify first. The demo songs aren’t real.', true, true); return; }
   const artists = [...new Set(S.songs.map(s => s.artist))];
-  const cache = (await IDB.get('lfmTags')) || {};
+  const cache = LFM.tags;
   const todo = artists.filter(a => !(a in cache)), total = todo.length;
   let done = 0, stop = null;
   report(total ? `Looking up tags for ${total.toLocaleString()} artists…` : 'Using saved tags. Matching artists to your stations…');
@@ -1020,6 +1021,39 @@ async function genresFromLastfm(report) {
   const placed = S.songs.filter(s => (!s.auto || s.auto === 'Unsorted') && S.lfmGenre[s.artist] && !S.tags.artist[s.artist] && !S.tags.song[s.id]).length;
   const still = S.songs.filter(s => !S.byId.has(s.id) || s.genre === 'Unsorted').length;
   report(`Placed ${placed.toLocaleString()} songs by Last.fm tags. ${still.toLocaleString()} songs are still Unsorted. Your own tags always win; use Sort artists into genres to fix any that landed wrong.`, false, true);
+}
+// What's still waiting for Last.fm: songs with no rating yet, and artists not yet checked for genres.
+function lfmPending() {
+  const rate = S.songs.filter(s => s.uri && LFM.data[s.id] == null).length;
+  const artists = new Set(S.songs.map(s => s.artist));
+  const tags = [...artists].filter(a => !(a in LFM.tags)).length;
+  return { rate, tags };
+}
+function renderLfmStatus() {
+  const el = $('#lfmStatus'); if (!el) return;
+  if (!S.songs.length) { el.textContent = 'Connect Spotify to load your songs.'; return; }
+  if (!S.settings.lfmKey) { el.textContent = 'Add your Last.fm key above to rate and sort songs automatically.'; return; }
+  const p = lfmPending();
+  el.textContent = !p.rate && !p.tags
+    ? 'Up to date. Every song is rated and every artist is sorted. Press the button again after you add playlists.'
+    : `Needs updating: ${p.rate.toLocaleString()} songs to rate, ${p.tags.toLocaleString()} artists to sort.`;
+}
+function lfmShow(text, err, finished) {
+  const m = $('#lfmMsg'); if (m) { m.className = 'msg' + (err ? ' err' : ''); m.textContent = text; }
+  if (finished && !$('#lib').open) toast(text.length > 140 ? 'Ratings and genres updated.' : text);
+}
+let lfmBusy = false;
+async function runLfmUpdate(report) {
+  if (lfmBusy) return;
+  if (!S.settings.lfmKey) { report('Add your Last.fm key first.', true, true); return; }
+  if (S.mode !== 'spotify') { report('Connect Spotify first. The demo songs aren’t real.', true, true); return; }
+  const p = lfmPending();
+  if (!p.rate && !p.tags) { report('Up to date. Nothing new to rate or sort.', false, true); renderLfmStatus(); return; }
+  lfmBusy = true;
+  try {
+    if (p.rate) await rateFromLastfm(true, report);
+    if (p.tags) await genresFromLastfm(report);
+  } finally { lfmBusy = false; renderLfmStatus(); }
 }
 async function recheckAllFromLastfm(report) {
   LFM.data = {}; await IDB.del('lfm');
@@ -1680,7 +1714,7 @@ async function connectFlow(fromRedirect) {
     if (!R.device) { try { await chooseDevice(); } catch (e) { /* shown when you press play */ } }
     if (S.autoStart && !S.playing) startStation();
     toast(`Connected. ${songs.length.toLocaleString()} songs across ${S.genres.length} genres.`);
-    if (S.settings.lfmKey) rateFromLastfm(true, (t, err, fin) => { $('#lfmMsg').className = 'msg' + (err ? ' err' : ''); $('#lfmMsg').textContent = t; if (fin && err) toast(t); });
+    if (S.settings.lfmKey) runLfmUpdate(lfmShow);
   } catch (e) {
     msg.textContent = e.message || 'Something went wrong talking to Spotify.'; msg.classList.add('err');
   } finally { bar.style.display = 'none'; $('#loginGo').disabled = false; }
@@ -1943,6 +1977,7 @@ function renderSources() {
       : `<p class="muted" style="margin:8px 0 0">${S.mode === 'spotify' ? 'Press Find my playlists to add playlists you made.' : 'Connect Spotify to add your playlists.'}</p>`);
 }
 function renderLib() {
+  renderLfmStatus();
   const rated = S.songs.filter(s => S.ratings[s.key] != null).length, uns = (S.pools.get('Unsorted') || []).length;
   $('#libSummary').textContent = `${S.songs.length.toLocaleString()} songs in ${S.genres.length} genres, ${rated.toLocaleString()} rated` +
     (uns ? `, ${uns.toLocaleString()} unsorted.` : '.') + (S.mode === 'spotify' ? '' : ' Showing the demo library.');
@@ -2101,10 +2136,19 @@ function bind() {
     const data = { app: 'rotation-spotify', saved: new Date().toISOString(), keys: {} };
     data.library = await IDB.get('library'); data.lfm = await IDB.get('lfm');
     for (const k of BACKUP_KEYS) { const v = LS.get(k, undefined); if (v !== undefined) data.keys[k] = v; }
+    const name = `knarly-backup-${new Date().toISOString().slice(0, 10)}.json`;
     const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
-    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `knarly-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    const file = new File([blob], name, { type: 'application/json' });
+    const m = $('#backupMsg'); m.className = 'msg';
+    // Phones: open the share sheet, so you can save straight to Google Drive or send it to another device.
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try { await navigator.share({ files: [file], title: 'Knarly backup' }); m.textContent = 'Backup sent. Choose Google Drive to keep it there.'; return; }
+      catch (err) { if (err && err.name === 'AbortError') { m.textContent = 'Backup cancelled.'; return; } }
+    }
+    // Computers: save to Downloads.
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name;
     document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
-    $('#backupMsg').className = 'msg'; $('#backupMsg').textContent = 'Backup saved to your Downloads folder. It includes your song library, so restoring doesn’t need Spotify to reload it.';
+    m.textContent = 'Backup saved to your Downloads folder. It includes your song library, so restoring doesn’t need Spotify to reload it.';
   });
   $('#restoreBtn').addEventListener('click', () => $('#restoreFile').click());
   $('#restoreFile').addEventListener('change', async e => {
@@ -2122,9 +2166,19 @@ function bind() {
   });
   const lfmReport = (text, err, finished) => { const m = $('#lfmMsg'); m.className = 'msg' + (err ? ' err' : ''); m.textContent = text; if (finished && !$('#lib').open) toast(text.length > 140 ? 'Star ratings updated from Last.fm.' : text); };
   $('#lfmKey').addEventListener('change', e => { S.settings.lfmKey = e.target.value.trim(); LS.set('settings', S.settings); });
-  $('#lfmRecheck').addEventListener('click', () => recheckAllFromLastfm(lfmReport));
-  $('#lfmGenres').addEventListener('click', () => genresFromLastfm(lfmReport));
-  $('#lfmGo').addEventListener('click', () => { S.settings.lfmKey = $('#lfmKey').value.trim(); LS.set('settings', S.settings); rateFromLastfm(true, lfmReport); });
+  $('#lfmUpdate').addEventListener('click', () => { S.settings.lfmKey = $('#lfmKey').value.trim() || S.settings.lfmKey; LS.set('settings', S.settings); runLfmUpdate(lfmShow); });
+  $('#lfmOneGo').addEventListener('click', async () => {
+    const q = norm($('#lfmOne').value); if (!q) return;
+    const hits = S.songs.filter(s => norm(s.title).includes(q) || norm(s.artist).includes(q));
+    if (!hits.length) { lfmShow('No songs in your library match that name.', true, true); return; }
+    for (const s of hits) delete LFM.data[s.id];
+    for (const a of new Set(hits.map(s => s.artist))) delete LFM.tags[a];
+    await IDB.set('lfm', LFM.data); await IDB.set('lfmTags', LFM.tags);
+    $('#lfmOne').value = '';
+    lfmShow(`Refreshing ${hits.length.toLocaleString()} song${hits.length === 1 ? '' : 's'}…`);
+    await runLfmUpdate(lfmShow);
+  });
+  $('#lfmRecheck').addEventListener('click', () => { if (confirm('Check every song again from Last.fm? This takes a while for a large library.')) recheckAllFromLastfm(lfmShow).then(() => renderLfmStatus()); });
   const numIn = (id, set) => $(id).addEventListener('change', e => { const v = Math.max(0, Math.round(+e.target.value || 0)); set(v); LS.set('settings', S.settings); rebuildQueue(); renderGauges(); renderNow(); });
   for (const k of [2, 3, 4, 5]) numIn('#tier' + k, v => { S.settings.tiers[k] = v; });
   for (const k of [5, 4, 3, 2, 1]) numIn('#gap' + k, v => { S.settings.gaps[k] = Math.max(10, v); });
@@ -2224,6 +2278,7 @@ function canAutoSignIn() {
 }
 async function init() {
   LFM.data = (await IDB.get('lfm')) || {};
+  LFM.tags = (await IDB.get('lfmTags')) || {};
   S.lfmGenre = (await IDB.get('lfmGenre')) || {};
   // Signed in to Spotify? Stay on your library, never the demo. Load the saved copy, or fetch it again if none was saved.
   let needLoad = false;
