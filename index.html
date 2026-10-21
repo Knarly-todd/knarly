@@ -252,7 +252,6 @@ dialog::backdrop{background:rgba(10,10,10,.55)}
   .top{gap:8px}
   .top .btn{padding:0 11px;font-size:14px}
   .status{order:5;width:100%}
-  .logo{height:44px}
   .tag{font-size:10px;letter-spacing:.16em}
   .brand{width:100%}
 }
@@ -264,7 +263,7 @@ dialog::backdrop{background:rgba(10,10,10,.55)}
   --pp-bg:#00E5FF; --pp-fg:#0E0F10; color-scheme:dark;
 }
 .mono{font-family:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace}
-.logo{display:block;height:58px;width:auto}
+.logo{display:block;height:87px;width:auto}
 .tag{display:block;margin-top:6px;font-size:12px;letter-spacing:.22em;text-transform:uppercase;color:var(--ink);font-weight:600}
 .tag .cy{color:#00E5FF}
 .face{background:transparent;border:0;padding:0}
@@ -339,6 +338,7 @@ body.allmode #specCol{opacity:.55}
 .allrow .btn{min-height:40px;padding:0 12px;font-size:13px}
 #lineup{width:min(620px,calc(100vw - 16px))}
 @media (prefers-reduced-motion:reduce){*{transition:none!important} body.playing .meter i{animation:none;height:60%}}
+@media (max-width:560px){.logo{height:66px}}
 </style>
 </head>
 <body>
