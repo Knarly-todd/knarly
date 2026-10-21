@@ -588,21 +588,27 @@ body.allmode #specCol{opacity:.55}
     <label for="lfmKey">Last.fm API key</label>
     <input type="text" id="lfmKey" autocomplete="off" spellcheck="false" placeholder="32 letters and numbers">
     <div class="tiers">
-      <label>2★ from <input type="number" id="tier2" min="0" step="1000"> plays</label>
-      <label>3★ from <input type="number" id="tier3" min="0" step="1000"> plays</label>
+      <label>Somewhat popular from <input type="number" id="tier3" min="0" step="1000"> plays</label>
+      <label>Cult indie from <input type="number" id="tier2" min="0" step="1000"> plays</label>
+      <label>Very popular from <input type="number" id="tier4" min="0" step="1000"> plays</label>
+      <label>Megastar from <input type="number" id="tier5" min="0" step="1000"> plays</label>
     </div>
-    <div class="row left" style="margin-top:10px"><button class="btn" id="lfmGo">Rate my library from Last.fm</button></div>
+    <div class="row left" style="margin-top:10px"><button class="btn" id="lfmGo">Rate my library from Last.fm</button>
+      <button class="btn" id="lfmRecheck">Recheck every song</button>
+      <button class="btn" id="lfmGenres">Assign genres from Last.fm</button></div>
     <div class="msg" id="lfmMsg" role="status"></div>
 
     <h3>Play gaps</h3>
     <p>About how often one song can come back, at the Balanced popularity setting. The Popularity dial stretches or shrinks these.</p>
-    <div class="tiers">
-      <label><span class="s">★★★</span> every <input type="number" id="gap3" min="10" step="5"> min</label>
-      <label><span class="s">★★</span> every <input type="number" id="gap2" min="10" step="5"> min</label>
-      <label><span class="s">★</span> every <input type="number" id="gap1" min="10" step="5"> min</label>
+    <div class="tiers" style="margin-top:6px">
+      <label><span class="s">★★★★★</span> Megastar every <input type="number" id="gap5" min="10" step="5"> min</label>
+      <label><span class="s">★★★★</span> Very popular every <input type="number" id="gap4" min="10" step="5"> min</label>
+      <label><span class="s">★★★</span> Somewhat popular every <input type="number" id="gap3" min="10" step="5"> min</label>
+      <label><span class="s">★★</span> Cult indie every <input type="number" id="gap2" min="10" step="5"> min</label>
+      <label><span class="s">★</span> Ultra-niche every <input type="number" id="gap1" min="10" step="5"> min</label>
     </div>
     <label for="unratedSel" style="margin-top:12px">Songs with no rating play as</label>
-    <select id="unratedSel"><option value="1">1★</option><option value="2">2★</option></select>
+    <select id="unratedSel"><option value="1">1★ Ultra-niche</option><option value="2">2★ Cult indie</option><option value="3">3★ Somewhat popular</option><option value="4">4★ Very popular</option><option value="5">5★ Megastar</option></select>
     <label class="chk" style="margin-top:10px!important"><input type="checkbox" id="autoplayChk"> Start playing when the app opens</label>
 
     <h3>Back up and restore</h3>
@@ -711,6 +717,9 @@ body.allmode #specCol{opacity:.55}
 /* ---------- Your Spotify app ---------- */
 // Paste your Client ID between the quotes to build it in. Leave it empty to type it on the sign-in screen instead.
 const BUILT_IN_CLIENT_ID = '9b576b58a50340599bd6a1c33827e419';
+// Last.fm API key for automatic star ratings. Not a password, but anyone who reads this file can see it.
+// Never add the Last.fm shared secret here.
+const BUILT_IN_LFM_KEY = '3bbd3121e1b83b1147938139b1417749';
 
 /* ---------- Utilities ---------- */
 const $ = s => document.querySelector(s);
@@ -819,13 +828,17 @@ function genreSim(a, b) {
 
 /* ---------- State ---------- */
 const DEMO_SPEED = 30;
-const BASE = { 3: 60, 2: 240, 1: 480 };
+const BASE = { 5: 60, 4: 90, 3: 120, 2: 180, 1: 240 };   // minutes between plays of one song, from most to least popular
+const TIER_NAME = { 5: 'Megastar', 4: 'Very popular', 3: 'Somewhat popular', 2: 'Cult indie', 1: 'Ultra-niche' };
+const TIER_ORDER = [5, 4, 3, 2, 1];
 const S = {
   mode: LS.get('mode', 'demo'),     // 'demo' or 'spotify'
   songs: [], byId: new Map(), pools: new Map(), genres: [], mixCache: new Map(),
   ratings: LS.get('ratings', {}), history: LS.get('history', {}), plays: LS.get('plays', []),
   stations: LS.get('stations', null), current: LS.get('current', 0),
-  settings: Object.assign({ unrated: 1, autoplay: true, lfmKey: '', tiers: { 2: 100000, 3: 1000000 }, gaps: { 3: 60, 2: 120, 1: 180 } }, LS.get('settings', {})), vclock: LS.get('vclock', Date.now()),
+  settings: Object.assign({ unrated: 1, autoplay: true, lfmKey: '', tiers: { 2: 10000, 3: 300000, 4: 2000000, 5: 10000000 }, gaps: { ...BASE } }, LS.get('settings', {})),
+  // Built-in key is used unless you've entered your own
+  // (set below, after S exists) vclock: LS.get('vclock', Date.now()),
   auth: LS.get('auth', null), clientId: BUILT_IN_CLIENT_ID || LS.get('clientId', ''), autoStart: false,
   // Your genre choices. Song beats playlist beats artist beats Spotify's guess.
   tags: Object.assign({ artist: {}, song: {}, playlist: {}, also: {} }, LS.get('tags', {})),
@@ -841,7 +854,8 @@ function resolveGenre(s) {
   const t = S.tags;
   if (t.song[s.id]) return t.song[s.id];
   for (const pid of s.pls || []) if (t.playlist[pid]) return t.playlist[pid];
-  return t.artist[s.artist] || s.auto || 'Unsorted';
+  const auto = s.auto && s.auto !== 'Unsorted' ? s.auto : null;
+  return t.artist[s.artist] || auto || (S.lfmGenre && S.lfmGenre[s.artist]) || 'Unsorted';
 }
 function setSongs(list) {
   S.songs = list.map(s => ({ ...s, auto: s.auto || s.genre || 'Unsorted', dur: s.dur || 210000, key: s.id }));
@@ -915,7 +929,9 @@ function ensureStations() {
 // Minutes between plays of one song, from your Play gaps setting, stretched by the Popularity dial.
 function intervals(dial) {
   const d = (dial - 50) / 50, g = S.settings.gaps || BASE;
-  return { 3: g[3] * Math.pow(3, d), 2: g[2] * Math.pow(1.4, -d), 1: g[1] * Math.pow(3, -d) };
+  const out = {};
+  for (const k of TIER_ORDER) out[k] = g[k] * Math.pow(3, d * (k - 3) / 2);
+  return out;
 }
 
 /* ---------- Automatic ratings from Last.fm play counts ---------- */
@@ -925,7 +941,7 @@ const cleanTitle = t => String(t).replace(/\s+-\s+.*$/, '').replace(/\s*[\(\[](f
 function autoStars(s) {
   const n = LFM.data[s.id], t = S.settings.tiers;
   if (n == null || n < 0) return 0;
-  return n >= t[3] ? 3 : n >= t[2] ? 2 : 1;
+  return n >= t[5] ? 5 : n >= t[4] ? 4 : n >= t[3] ? 3 : n >= t[2] ? 2 : 1;
 }
 const starsOf = s => S.ratings[s.key] || autoStars(s) || S.settings.unrated;
 const fmtCount = n => n >= 1e6 ? (n / 1e6).toFixed(n >= 1e7 ? 0 : 1) + 'M' : n >= 1e3 ? Math.round(n / 1e3) + 'K' : String(n);
@@ -941,10 +957,79 @@ async function lfmLookup(s, key, tries = 0) {
   }
   return +((j.track && j.track.playcount) || 0);
 }
+// ---- Genres from Last.fm tags ----
+// Last.fm lists what listeners tag each artist with (e.g. "shoegaze", "pop rock").
+// Each tag is matched to your station names using the same genre families as the rest of the app.
+async function lfmArtistTags(name, key, tries = 0) {
+  const u = 'https://ws.audioscrobbler.com/2.0/?' + new URLSearchParams({ method: 'artist.getTopTags', artist: name, autocorrect: '1', api_key: key, format: 'json' });
+  const r = await fetch(u); const j = await r.json().catch(() => null);
+  if (!j) throw new Error('Last.fm didn’t answer.');
+  if (j.error) {
+    if (j.error === 6) return [];                                   // artist unknown to Last.fm
+    if (j.error === 10 || j.error === 26) throw Object.assign(new Error('Last.fm says that API key isn’t valid. Check it and try again.'), { fatal: true });
+    if (j.error === 29 && tries < 4) { await sleep(4000); return lfmArtistTags(name, key, tries + 1); }
+    throw new Error(j.message || 'Last.fm error');
+  }
+  const tags = (j.toptags && j.toptags.tag) || [];
+  return tags.slice(0, 10).map(t => ({ name: String(t.name).toLowerCase(), count: +t.count || 0 }));
+}
+function tagFamily(t) { return PRIORITY.find(f => FAMILY_RE[f].test(t)) || null; }
+function stationMatch(tag, station) {
+  if (tag === station.toLowerCase()) return 1;
+  const ft = tagFamily(tag), fs = famOfName(station);
+  if (!ft || !fs) return 0;
+  return ft === fs ? 0.9 : (EDGE.get(ft + '|' + fs) || 0) * 0.6;
+}
+// Returns the station a set of tags points to, or null if the tags don't clearly agree.
+function suggestStation(tags, stations) {
+  const total = tags.reduce((a, t) => a + t.count, 0);
+  if (!total) return null;
+  let best = null, bestScore = 0;
+  for (const st of stations) {
+    let sc = 0; for (const t of tags) sc += t.count * stationMatch(t.name, st);
+    if (sc > bestScore) { bestScore = sc; best = st; }
+  }
+  return best && bestScore / total >= 0.3 ? best : null;
+}
+async function genresFromLastfm(report) {
+  const key = (S.settings.lfmKey || '').trim();
+  if (!key) { report('Add your Last.fm API key first.', true, true); return; }
+  if (S.mode !== 'spotify') { report('Connect Spotify first. The demo songs aren’t real.', true, true); return; }
+  const artists = [...new Set(S.songs.map(s => s.artist))];
+  const cache = (await IDB.get('lfmTags')) || {};
+  const todo = artists.filter(a => !(a in cache)), total = todo.length;
+  let done = 0, stop = null;
+  report(total ? `Looking up tags for ${total.toLocaleString()} artists…` : 'Using saved tags. Matching artists to your stations…');
+  const worker = async () => {
+    while (todo.length && !stop) {
+      const a = todo.shift();
+      try { cache[a] = await lfmArtistTags(a, key); } catch (e) { if (e.fatal) { stop = e; break; } }
+      done++;
+      if (done % 25 === 0) { IDB.set('lfmTags', cache); report(`Looking up tags… ${done.toLocaleString()} of ${total.toLocaleString()} artists`); }
+      await sleep(260);
+    }
+  };
+  if (total) await Promise.all([worker(), worker()]);
+  await IDB.set('lfmTags', cache);
+  if (stop) { report(stop.message, true, true); return; }
+  const stations = [...new Set(S.stations.filter(s => !s.all).map(s => s.genre))].filter(g => g && g !== 'Unsorted');
+  S.lfmGenre = {};
+  for (const a of artists) { const g = suggestStation(cache[a] || [], stations); if (g) S.lfmGenre[a] = g; }
+  await IDB.set('lfmGenre', S.lfmGenre);
+  regroup(); rebuildQueue(); renderLib(); renderTiles(); renderNow();
+  const placed = S.songs.filter(s => (!s.auto || s.auto === 'Unsorted') && S.lfmGenre[s.artist] && !S.tags.artist[s.artist] && !S.tags.song[s.id]).length;
+  const still = S.songs.filter(s => !S.byId.has(s.id) || s.genre === 'Unsorted').length;
+  report(`Placed ${placed.toLocaleString()} songs by Last.fm tags. ${still.toLocaleString()} songs are still Unsorted. Your own tags always win; use Sort artists into genres to fix any that landed wrong.`, false, true);
+}
+async function recheckAllFromLastfm(report) {
+  LFM.data = {}; await IDB.del('lfm');
+  await rateFromLastfm(false, report);
+}
+
 function tierSummary() {
-  const c = { 1: 0, 2: 0, 3: 0, mine: 0, none: 0 };
+  const c = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, mine: 0, none: 0 };
   for (const s of S.songs) { if (S.ratings[s.key] != null) c.mine++; else { const a = autoStars(s); if (a) c[a]++; else c.none++; } }
-  return `From Last.fm: 3★ ${c[3].toLocaleString()}, 2★ ${c[2].toLocaleString()}, 1★ ${c[1].toLocaleString()}. Rated by you: ${c.mine.toLocaleString()}. Not found or not checked yet: ${c.none.toLocaleString()} (these use your Unrated setting).`;
+  return `From Last.fm: ${TIER_ORDER.map(k => `${TIER_NAME[k]} ${c[k].toLocaleString()}`).join(', ')}. Rated by you: ${c.mine.toLocaleString()}. Not found or not checked yet: ${c.none.toLocaleString()} (these use your Unrated setting).`;
 }
 // report(text, isError, finished)
 async function rateFromLastfm(onlyMissing, report) {
@@ -1698,7 +1783,7 @@ function renderGauges() {
     $('#popRange').value = pv; $('#popRange').setAttribute('aria-valuetext', pLabel); $('#popVal').textContent = pLabel;
     setKnob($('#popKnob'), pv, pLabel); $('#popState').textContent = pLabel;
     const iv = intervals(pv);
-    $('#popReadout').innerHTML = [3, 2, 1].map(k => `<div><span class="s">${STARS(k)}</span><span>every ${fmtMin(iv[k])}</span></div>`).join('');
+    $('#popReadout').innerHTML = TIER_ORDER.map(k => `<div><span class="s">${STARS(k)}</span><span>${TIER_NAME[k]}, every ${fmtMin(iv[k])}</span></div>`).join('');
     return;
   }
   const g = st.genre || 'Genre', mix = mixFor(st), sv = st.spec;
@@ -1716,7 +1801,7 @@ function renderGauges() {
   setKnob($('#popKnob'), pv, pLabel); $('#popState').textContent = pLabel;
   $('#popRange').value = pv; $('#popRange').setAttribute('aria-valuetext', pLabel); $('#popVal').textContent = pLabel;
   const iv = intervals(pv);
-  $('#popReadout').innerHTML = [3, 2, 1].map(k => `<div><span class="s">${STARS(k)}</span><span>every ${fmtMin(iv[k])}</span></div>`).join('');
+  $('#popReadout').innerHTML = TIER_ORDER.map(k => `<div><span class="s">${STARS(k)}</span><span>${TIER_NAME[k]}, every ${fmtMin(iv[k])}</span></div>`).join('');
 }
 const ICON_PLAY = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.5v15l13-7.5z"/></svg>';
 const ICON_PAUSE = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4h4.5v16H6zM13.5 4H18v16h-4.5z"/></svg>';
@@ -1743,7 +1828,7 @@ function renderNow() {
     <div class="meta">${head}<div class="t">${esc(s.title)}</div>
       <div class="a">${esc(s.artists || s.artist)}${s.album ? ', ' + esc(s.album) : ''}${s.url ? ` <a href="${esc(s.url)}" target="_blank" rel="noopener">Open in Spotify</a>` : ''}</div>
       <div class="stars" role="radiogroup" aria-label="Your rating">
-        ${[1, 2, 3].map(n => `<button class="star${n <= k ? ' fill' : ''}" role="radio" aria-checked="${n === k}" aria-label="${n} star${n > 1 ? 's' : ''}" data-r="${n}">★</button>`).join('')}
+        ${[1, 2, 3, 4, 5].map(n => `<button class="star${n <= k ? ' fill' : ''}" role="radio" aria-checked="${n === k}" aria-label="${n} star${n > 1 ? 's' : ''}" data-r="${n}">★</button>`).join('')}
         <span class="hint">${rated ? 'Your rating, tap to change' : autoStars(s) ? `From Last.fm, ${fmtCount(LFM.data[s.id])} plays. Tap to set your own` : 'Unrated, tap to rate'}</span></div>
       <div class="prog"><i id="progBar"></i></div>
       <div class="times"><span id="tPos">0:00</span><span id="tDur">${fmtTime(S.np.dur)}</span></div>
@@ -1864,8 +1949,8 @@ function renderLib() {
   $('#unratedSel').value = String(S.settings.unrated);
   $('#autoplayChk').checked = !!S.settings.autoplay;
   $('#lfmKey').value = S.settings.lfmKey || '';
-  $('#tier2').value = S.settings.tiers[2]; $('#tier3').value = S.settings.tiers[3];
-  $('#gap3').value = S.settings.gaps[3]; $('#gap2').value = S.settings.gaps[2]; $('#gap1').value = S.settings.gaps[1];
+  for (const k of [2, 3, 4, 5]) $('#tier' + k).value = S.settings.tiers[k];
+  for (const k of [5, 4, 3, 2, 1]) $('#gap' + k).value = S.settings.gaps[k];
   const known = [...new Set([...DEFAULT_STATIONS, ...S.genres.map(g => g.genre)])].filter(g => g !== 'Unsorted');
   $('#genreList').innerHTML = known.map(g => `<option value="${esc(g)}"></option>`).join('');
   $('#stgrid').innerHTML = S.stations.filter(s => !s.all).map((st, i) => {
@@ -2037,13 +2122,12 @@ function bind() {
   });
   const lfmReport = (text, err, finished) => { const m = $('#lfmMsg'); m.className = 'msg' + (err ? ' err' : ''); m.textContent = text; if (finished && !$('#lib').open) toast(text.length > 140 ? 'Star ratings updated from Last.fm.' : text); };
   $('#lfmKey').addEventListener('change', e => { S.settings.lfmKey = e.target.value.trim(); LS.set('settings', S.settings); });
+  $('#lfmRecheck').addEventListener('click', () => recheckAllFromLastfm(lfmReport));
+  $('#lfmGenres').addEventListener('click', () => genresFromLastfm(lfmReport));
   $('#lfmGo').addEventListener('click', () => { S.settings.lfmKey = $('#lfmKey').value.trim(); LS.set('settings', S.settings); rateFromLastfm(true, lfmReport); });
   const numIn = (id, set) => $(id).addEventListener('change', e => { const v = Math.max(0, Math.round(+e.target.value || 0)); set(v); LS.set('settings', S.settings); rebuildQueue(); renderGauges(); renderNow(); });
-  numIn('#tier2', v => { S.settings.tiers[2] = v; });
-  numIn('#tier3', v => { S.settings.tiers[3] = v; });
-  numIn('#gap3', v => { S.settings.gaps[3] = Math.max(10, v); });
-  numIn('#gap2', v => { S.settings.gaps[2] = Math.max(10, v); });
-  numIn('#gap1', v => { S.settings.gaps[1] = Math.max(10, v); });
+  for (const k of [2, 3, 4, 5]) numIn('#tier' + k, v => { S.settings.tiers[k] = v; });
+  for (const k of [5, 4, 3, 2, 1]) numIn('#gap' + k, v => { S.settings.gaps[k] = Math.max(10, v); });
   $('#autoplayChk').addEventListener('change', e => { S.settings.autoplay = e.target.checked; LS.set('settings', S.settings); });
   $('#unratedSel').addEventListener('change', e => { S.settings.unrated = +e.target.value; LS.set('settings', S.settings); rebuildQueue(); renderNow(); renderLib(); });
   $('#stgrid').addEventListener('change', e => {
@@ -2140,6 +2224,7 @@ function canAutoSignIn() {
 }
 async function init() {
   LFM.data = (await IDB.get('lfm')) || {};
+  S.lfmGenre = (await IDB.get('lfmGenre')) || {};
   // Signed in to Spotify? Stay on your library, never the demo. Load the saved copy, or fetch it again if none was saved.
   let needLoad = false;
   if (S.auth) {
@@ -2151,8 +2236,9 @@ async function init() {
     if (S.mode === 'spotify') { S.mode = 'demo'; LS.set('mode', 'demo'); }
     setSongs(demoLibrary());
   }
-  if (!S.settings.gaps || !S.settings.gaps[3]) S.settings.gaps = { 3: 60, 2: 120, 1: 180 };
-  if (!S.settings.tiers || !S.settings.tiers[3]) S.settings.tiers = { 2: 100000, 3: 1000000 };
+  if (!S.settings.lfmKey) { S.settings.lfmKey = BUILT_IN_LFM_KEY; LS.set('settings', S.settings); }
+  if (!S.settings.gaps || !S.settings.gaps[5]) S.settings.gaps = { ...BASE };
+  if (!S.settings.tiers || !S.settings.tiers[5]) S.settings.tiers = { 2: 10000, 3: 300000, 4: 2000000, 5: 10000000 };
   $('#meter').innerHTML = Array.from({ length: 18 }, (_, i) => `<i style="animation-delay:-${(i * 0.37 % 1).toFixed(2)}s;animation-duration:${(0.6 + (i * 0.23 % 0.6)).toFixed(2)}s"></i>`).join('');
   ensureStations(); buildKnob($('#specKnob')); buildKnob($('#popKnob')); bind(); rebuildQueue(); renderAll();
   let signedIn = false;
