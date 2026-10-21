@@ -374,7 +374,7 @@ body.allmode #specCol{opacity:.55}
 }
 
 /* ===== Layout 3: Up next | Genre focus | Tuner | Popularity ===== */
-.face{display:grid;grid-template-columns:240px minmax(0,1fr) 220px;grid-template-areas:"list tune spec" "list now pop";gap:22px;align-items:start}
+.face{display:grid;grid-template-columns:240px minmax(0,1fr) 220px;grid-template-areas:"list tune spec" "list tune pop" "list now .";gap:22px;align-items:start}
 #nowCard{grid-area:now}
 #tuneCol{grid-area:tune}
 #tuneCol{justify-self:center;width:min(100%,600px)}
@@ -1226,8 +1226,12 @@ async function getDevices() { const d = await api('/me/player/devices'); return 
 async function chooseDevice() {
   const list = await getDevices();
   if (!list.length) throw noDevice();
+  // Order: whatever Spotify is playing on right now, then this phone or computer,
+  // then your last picked speaker. Speakers you haven't used here are never chosen by default.
+  const usable = list.filter(x => !x.is_restricted);
+  const here = usable.find(x => x.type === (isPhone ? 'Smartphone' : 'Computer'));
   const saved = S.settings.deviceName;
-  const d = list.find(x => saved && x.name === saved) || list.find(x => x.is_active) || list.find(x => x.type === (isPhone ? 'Smartphone' : 'Computer')) || list[0];
+  const d = usable.find(x => x.is_active) || here || usable.find(x => saved && x.name === saved) || usable[0] || list[0];
   R.device = { id: d.id, name: d.name, type: d.type }; renderStatus();
   return R.device;
 }
