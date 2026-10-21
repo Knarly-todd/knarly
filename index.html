@@ -413,6 +413,32 @@ body.allmode #specCol{opacity:.55}
   .side .readout{display:none}
   .side .readout.open{display:grid}
 }
+
+/* Lineup: compact station chips so song titles have room */
+.gchip.c{max-width:none;min-width:38px;padding:0 8px;text-align:center;font-stretch:125%;font-weight:800;font-size:13px}
+.lineup .tx b{font-size:15px}
+.allrow .tx b{font-size:15px}
+
+/* ===== Phone: lineup rows give room to song titles; whole control set fits one screen ===== */
+@media (max-width:700px){
+  #lineup .dlg{padding:14px}
+  .lineup .h{width:30px}
+  .lineup .n{display:none}
+  .lineup .x{width:30px;font-size:18px}
+  .lineup .k{font-size:11px;letter-spacing:0}
+  .lineup li{gap:6px}
+  .brandrow .logo{height:66px}
+  .wrap{padding:6px 12px 36px;gap:8px}
+  .face{gap:8px}
+  .top{gap:6px}
+  #tuneCol{gap:6px}
+  .glass.lcd{padding:10px 14px}
+  .meter{margin-top:4px}
+  .pp{width:60px;height:60px}
+  .side{padding:6px 12px}
+  .mixtog{min-height:26px}
+  .presets .preset{min-height:32px}
+}
 </style>
 </head>
 <body>
@@ -1392,7 +1418,7 @@ function renderLineup() {
     const s = S.byId.get(id); if (!s) return '';
     const other = !onGenre(s, st.genre) ? `, ${esc(s.genre)}` : '';
     return `<li data-id="${esc(id)}"><span class="h" role="button" tabindex="0" aria-label="Move ${esc(s.title)}. Use arrow keys">${grip}</span><span class="n">${i + 1}</span>
-      <div class="tx"><b>${esc(s.title)}</b><span>${esc(s.artist)}</span></div><span class="k">${STARS(starsOf(s))}</span>${genreChip(s)}
+      <div class="tx"><b>${esc(s.title)}</b><span>${esc(s.artist)}</span></div><span class="k">${STARS(starsOf(s))}</span>${genreChip(s, true)}
       <button class="x" data-x="${esc(id)}" aria-label="Remove ${esc(s.title)}">×</button>${genreEditor(s)}</li>`;
   }).join('') || '<li class="muted" style="padding:12px 0">Nothing lined up.</li>';
 }
@@ -1446,24 +1472,27 @@ function renderAllSongs() {
   if (q) rows = rows.filter(s => norm(s.title + ' ' + s.artist).includes(q));
   rows.sort((a, b) => starsOf(b) - starsOf(a) || a.title.localeCompare(b.title));
   $('#allCount').textContent = `${rows.length.toLocaleString()} songs on this station` + (rows.length > 200 ? '. Showing the first 200; search to find others.' : '.');
-  $('#allList').innerHTML = rows.slice(0, 200).map(songRow).join('');
+  $('#allList').innerHTML = rows.slice(0, 200).map(s => songRow(s, true)).join('');
 }
 /* ---------- Change any song's genre from a list ---------- */
 const ED = { open: null };
 // The genre a song would have without its own song tag (from its playlist, artist or Spotify).
 function baseGenreOf(s) { const t = S.tags.song[s.id]; delete S.tags.song[s.id]; const g = resolveGenre(s); if (t) S.tags.song[s.id] = t; return g; }
-function genreChip(s) {
+function genreChip(s, compact) {
   const label = s.genre + (s.also && s.also.length ? ' + ' + s.also.join(', ') : '');
-  return `<button class="gchip${S.tags.song[s.id] || S.tags.also.song[s.id] ? ' set' : ''}" data-edit="${esc(s.id)}" aria-expanded="${ED.open === s.id}" aria-label="Genre for ${esc(s.title)}: ${esc(label)}. Change">${esc(label)}</button>`;
+  // Compact: just the station number (+ if it also plays elsewhere), so song titles have room.
+  const idx = S.stations.findIndex(st => !st.all && onGenre(s, st.genre));
+  const short = compact ? (idx >= 0 ? String(idx + 1) : '–') + (s.also && s.also.length ? '+' : '') : label;
+  return `<button class="gchip${compact ? ' c' : ''}${S.tags.song[s.id] || S.tags.also.song[s.id] ? ' set' : ''}" data-edit="${esc(s.id)}" aria-expanded="${ED.open === s.id}" title="${esc(label)}" aria-label="Genre for ${esc(s.title)}: ${esc(label)}. Change">${esc(short)}</button>`;
 }
 function genreEditor(s) {
   if (ED.open !== s.id) return '';
   return `<div class="ged"><label>Genre <select data-sg="${esc(s.id)}">${genreOptions(S.tags.song[s.id] || '', `Same as artist or playlist (${baseGenreOf(s)})`)}</select></label>
     <label>Also plays on <select data-sa="${esc(s.id)}">${genreOptions(S.tags.also.song[s.id] || '', 'No second genre')}</select></label></div>`;
 }
-function songRow(s) {
+function songRow(s, compact) {
   return `<div class="allrow" data-row="${esc(s.id)}"><div class="tx"><b>${esc(s.title)}</b><span>${esc(s.artist)}</span></div>
-    <span class="k">${STARS(starsOf(s))}</span>${genreChip(s)}<button class="btn" data-next="${esc(s.id)}" aria-label="Play ${esc(s.title)} next">Play next</button>${genreEditor(s)}</div>`;
+    <span class="k">${STARS(starsOf(s))}</span>${genreChip(s, compact)}<button class="btn" data-next="${esc(s.id)}" aria-label="Play ${esc(s.title)} next">Play next</button>${genreEditor(s)}</div>`;
 }
 // One handler for every list: open the editor, then save the choice right away.
 function bindSongEditing(container, rerender) {
@@ -1495,7 +1524,7 @@ function renderPlaylistSongs() {
   if (q) rows = rows.filter(s => norm(s.title + ' ' + s.artist).includes(q));
   rows.sort((a, b) => a.artist.localeCompare(b.artist) || a.title.localeCompare(b.title));
   $('#plsCount').textContent = `${total.toLocaleString()} songs` + (rows.length > 200 ? '. Showing the first 200; search to find others.' : '.');
-  $('#plsList').innerHTML = rows.slice(0, 200).map(songRow).join('') || '<p class="muted">No songs match.</p>';
+  $('#plsList').innerHTML = rows.slice(0, 200).map(s => songRow(s)).join('') || '<p class="muted">No songs match.</p>';
 }
 
 async function playNextSong(id) {
