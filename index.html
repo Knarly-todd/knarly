@@ -374,7 +374,9 @@ body.allmode #specCol{opacity:.55}
 }
 
 /* ===== Layout 3: Up next | Genre focus | Tuner | Popularity ===== */
-.face{display:grid;grid-template-columns:240px minmax(0,1fr) 220px;grid-template-areas:"list tune spec" "list tune pop";gap:22px;align-items:start}
+.face{display:grid;grid-template-columns:240px minmax(0,1fr) 220px;grid-template-areas:"list tune spec" "list now pop";gap:22px;align-items:start}
+#nowCard{grid-area:now}
+#tuneCol{grid-area:tune}
 #tuneCol{justify-self:center;width:min(100%,600px)}
 .tunegrid .glass{grid-column:1 / -1}
 .tunegrid .tunemain{min-width:0}
@@ -391,6 +393,25 @@ body.allmode #specCol{opacity:.55}
 @media (max-width:700px){
   .face{grid-template-columns:1fr;grid-template-areas:"tune" "spec" "pop" "list"}
   .emptyNow{width:auto}
+}
+
+/* ===== Phone: tuner, then sliders, then album and Up next ===== */
+.mixtog{display:none;margin-top:4px;min-height:34px;border:0;background:none;color:var(--accent);font-weight:700;font-size:13px;padding:0}
+@media (max-width:1100px){
+  .face{grid-template-columns:1fr 1fr;grid-template-areas:"tune tune" "spec pop" "now now" "list list"}
+}
+@media (max-width:700px){
+  .face{grid-template-columns:1fr;grid-template-areas:"tune" "spec" "pop" "now" "list";gap:10px}
+  .wrap{padding:10px 12px 40px;gap:10px}
+  .top{gap:8px}
+  #tuneCol{gap:8px}
+  .tunegrid{row-gap:6px}
+  .presets{gap:4px}
+  .presets .preset{min-height:34px}
+  .side{padding:8px 12px}
+  .mixtog{display:block}
+  .side .readout{display:none}
+  .side .readout.open{display:grid}
 }
 </style>
 </head>
@@ -418,6 +439,7 @@ body.allmode #specCol{opacity:.55}
       <div class="fader"><div class="fhead"><span>Genre focus</span><b id="specVal"></b></div>
         <input type="range" class="frange" id="specRange" min="0" max="100" step="1" aria-label="Genre focus, pure to adjacent genres">
         <div class="fends"><span>Pure</span><span>Adjacent</span></div></div>
+      <button class="mixtog" id="specTog" aria-expanded="false" aria-controls="specReadout">Show details ▾</button>
       <div class="readout" id="specReadout"></div>
     </div>
 
@@ -442,7 +464,6 @@ body.allmode #specCol{opacity:.55}
         </div>
       </div>
       <div class="presets" id="presets" role="group" aria-label="Station presets"></div>
-      <div class="card" id="nowCard" aria-label="Now playing"></div>
     </div>
 
     <div class="side" id="popCol">
@@ -453,8 +474,10 @@ body.allmode #specCol{opacity:.55}
       <div class="fader"><div class="fhead"><span>Popularity</span><b id="popVal"></b></div>
         <input type="range" class="frange" id="popRange" min="0" max="100" step="1" aria-label="Popularity, popular to deep cuts">
         <div class="fends"><span>Popular</span><span>Deep cuts</span></div></div>
+      <button class="mixtog" id="popTog" aria-expanded="false" aria-controls="popReadout">Show details ▾</button>
       <div class="readout" id="popReadout"></div>
     </div>
+    <div class="card" id="nowCard" aria-label="Now playing"></div>
   </section>
 
   <section class="lower">
@@ -1904,6 +1927,12 @@ function bind() {
   $('#specRange').addEventListener('input', e => setSpec(+e.target.value));
   $('#popRange').addEventListener('input', e => setPop(+e.target.value));
   bindLineupDrag();
+  [['#specTog', '#specReadout'], ['#popTog', '#popReadout']].forEach(([b, box]) => {
+    $(b).addEventListener('click', () => {
+      const open = $(box).classList.toggle('open');
+      $(b).setAttribute('aria-expanded', open); $(b).textContent = open ? 'Hide details ▴' : 'Show details ▾';
+    });
+  });
   $('#ticknums').addEventListener('click', e => { const s = e.target.closest('span[data-i]'); if (s) tune(+s.dataset.i); });
   $('#allBtn').addEventListener('click', () => tune(ALL));
   window.addEventListener('resize', layoutTicks);
@@ -1949,14 +1978,15 @@ function bind() {
   $('#libBtn').addEventListener('click', () => { $('#plMsg').textContent = ''; if (!LFM.running) $('#lfmMsg').textContent = S.mode === 'spotify' && Object.keys(LFM.data).length ? tierSummary() : ''; renderLib(); $('#lib').showModal(); });
   $('#libDone').addEventListener('click', () => $('#lib').close());
   const BACKUP_KEYS = ['ratings', 'history', 'plays', 'stations', 'current', 'settings', 'tags', 'sources', 'clientId', 'artistGenres2'];
-  $('#backupBtn').addEventListener('click', () => {
+  $('#backupBtn').addEventListener('click', async () => {
     savePlays();
     const data = { app: 'rotation-spotify', saved: new Date().toISOString(), keys: {} };
+    data.library = await IDB.get('library'); data.lfm = await IDB.get('lfm');
     for (const k of BACKUP_KEYS) { const v = LS.get(k, undefined); if (v !== undefined) data.keys[k] = v; }
     const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `knarly-backup-${new Date().toISOString().slice(0, 10)}.json`;
     document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
-    $('#backupMsg').className = 'msg'; $('#backupMsg').textContent = 'Backup saved to your Downloads folder.';
+    $('#backupMsg').className = 'msg'; $('#backupMsg').textContent = 'Backup saved to your Downloads folder. It includes your song library, so restoring doesn’t need Spotify to reload it.';
   });
   $('#restoreBtn').addEventListener('click', () => $('#restoreFile').click());
   $('#restoreFile').addEventListener('change', async e => {
@@ -1966,6 +1996,8 @@ function bind() {
       const data = JSON.parse(await f.text());
       if (!data || data.app !== 'rotation-spotify' || !data.keys) throw new Error('That isn’t a Knarly backup file.');
       for (const k of BACKUP_KEYS) if (k in data.keys) LS.set(k, data.keys[k]);
+      if (data.library) await IDB.set('library', data.library);
+      if (data.lfm) await IDB.set('lfm', data.lfm);
       m.textContent = 'Restored. Reloading…';
       setTimeout(() => location.reload(), 800);
     } catch (err) { m.textContent = err.message || 'Couldn’t read that file.'; m.classList.add('err'); }
