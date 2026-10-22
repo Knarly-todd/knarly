@@ -468,6 +468,12 @@ details.fold > *:not(summary){margin-top:6px}
 
 /* Revision label: P = prototype revision; becomes Rev A once a version is ready */
 .revtag{position:fixed;right:8px;bottom:calc(6px + env(safe-area-inset-bottom,0px));font-family:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;font-size:11px;letter-spacing:.06em;color:var(--muted);opacity:.6;pointer-events:none;z-index:1}
+
+/* Curved phone edges (e.g. Samsung Ultra): keep content clear of the screen edge on both sides */
+@media (max-width:700px){
+  .wrap{padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(20px,env(safe-area-inset-right,0px))}
+  .revtag{right:12px}
+}
 </style>
 </head>
 <body>
@@ -1417,7 +1423,7 @@ async function loadLibrary(progress) {
 /* ---------- Spotify Connect: Knarly picks the songs, the Spotify app plays them ---------- */
 // Knarly hands Spotify a long run of songs at once, so music keeps going with your screen off.
 const BATCH = 40;   // about two and a half hours
-const R = Object.assign({ device: null, batch: [], lastId: null, polling: false, dirty: false, foreign: false }, { batch: LS.get('batch', []) });
+const R = Object.assign({ device: null, batch: [], lastId: null, polling: false, dirty: false, foreign: false, expect: null, expectUntil: 0 }, { batch: LS.get('batch', []) });
 const isPhone = /Android|iPhone|iPad/i.test(navigator.userAgent);
 const noDevice = () => Object.assign(new Error('Spotify isn’t open. Open the Spotify app, play any song for a moment, then come back and press play.'), { noDevice: true });
 async function getDevices() { const d = await api('/me/player/devices'); return (d && d.devices) || []; }
@@ -1454,18 +1460,21 @@ function buildBatch(n, t, seedHist, keep) {
   }
   return out;
 }
-async function playIds(ids, positionMs = 0) {
+async function playIds(ids, positionMs = 0, startAt = 0) {
   if (!R.device) await chooseDevice();
-  const body = JSON.stringify({ uris: ids.map(id => S.byId.get(id).uri), position_ms: Math.max(0, Math.round(positionMs)) });
+  const payload = { uris: ids.map(id => S.byId.get(id).uri), position_ms: Math.max(0, Math.round(positionMs)) };
+  if (startAt > 0) payload.offset = { position: startAt };
+  const body = JSON.stringify(payload);
   try { await api(`/me/player/play?device_id=${encodeURIComponent(R.device.id)}`, { method: 'PUT', body }); }
   catch (e) {
     if (e.status !== 404) throw e;
     R.device = null; await chooseDevice();   // the device went to sleep; find it again
     await api(`/me/player/play?device_id=${encodeURIComponent(R.device.id)}`, { method: 'PUT', body });
   }
-  R.batch = ids; R.dirty = false; R.foreign = false; R.lastId = ids[0];
+  R.batch = ids; if (!startAt) R.dirty = false; R.foreign = false; R.lastId = ids[startAt];
+  R.expect = ids[startAt]; R.expectUntil = Date.now() + 8000;   // Spotify can take a moment to report the new song
   LS.set('batch', ids);
-  const s = S.byId.get(ids[0]);
+  const s = S.byId.get(ids[startAt]);
   noteStart(s, Date.now() - positionMs);
   S.np = { id: s.id, pos: positionMs, dur: s.dur }; S.playing = true;
   renderNow(); renderNext(); setTimeout(poll, 1500);
@@ -1492,7 +1501,7 @@ async function refreshBatch(i, progressMs) {
 }
 async function remoteToggle() {
   if (!S.auth) { openLogin(); return; }
-  if (!S.np || R.foreign || !R.batch.length) return startStation();
+  if (!S.np || (R.foreign && !R.expect) || !R.batch.length) return startStation();
   try {
     if (!R.device) await chooseDevice();
     if (S.playing) { await api(`/me/player/pause?device_id=${encodeURIComponent(R.device.id)}`, { method: 'PUT' }); S.playing = false; }
@@ -1505,7 +1514,7 @@ async function remoteToggle() {
 }
 async function remoteNext() {
   if (!S.auth) { openLogin(); return; }
-  if (!S.np || R.foreign || !R.batch.length) return startStation();
+  if (!S.np || (R.foreign && !R.expect) || !R.batch.length) return startStation();
   try {
     if (!R.device) await chooseDevice();
     await api(`/me/player/next?device_id=${encodeURIComponent(R.device.id)}`, { method: 'POST' });
@@ -1523,7 +1532,12 @@ async function poll() {
     const st = await api('/me/player?additional_types=track');
     if (!st || !st.item) { S.playing = false; renderTransport(); return; }
     if (st.device && st.device.id) { R.device = { id: st.device.id, name: st.device.name, type: st.device.type }; renderStatus(); }
-    const it = st.item, i = R.batch.indexOf(it.id);
+    const it = st.item;
+    if (R.expect) {
+      if (it.id === R.expect || Date.now() > R.expectUntil) R.expect = null;
+      else return;   // still showing the previous song; wait for Spotify to catch up
+    }
+    const i = R.batch.indexOf(it.id);
     S.playing = !!st.is_playing; R.foreign = i < 0;
     S.np = { id: it.id, pos: st.progress_ms || 0, dur: it.duration_ms || 1, ext: i < 0 || !S.byId.has(it.id) ? extSong(it) : null };
     if (it.id !== R.lastId) {
@@ -1938,7 +1952,7 @@ function renderProgress() {
 async function playFromQueue(id) {
   if (S.mode === 'spotify') {
     const idx = R.batch.indexOf(id); if (idx < 0) return;
-    try { await playIds(R.batch.slice(idx)); } catch (e) { handleRemoteError(e); }
+    try { await playIds(R.batch, 0, idx); } catch (e) { handleRemoteError(e); }
     return;
   }
   S.queue = [id, ...S.queue.filter(x => x !== id)];
