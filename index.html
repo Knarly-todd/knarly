@@ -447,6 +447,24 @@ details.fold{margin:18px 0 0;border-top:1px solid var(--line);padding-top:4px}
 .foldsum::before{content:'▸';color:var(--accent);font-size:14px;transition:transform .15s}
 details.fold[open] > .foldsum::before{transform:rotate(90deg)}
 details.fold > *:not(summary){margin-top:6px}
+
+/* Up next: longer list you can scroll and tap */
+#next{max-height:380px;overflow:auto}
+#next .qrow{cursor:pointer}
+#next .qrow:hover{background:rgba(0,229,255,.06)}
+#next .qrow:focus-visible{outline:2px solid #00E5FF;outline-offset:-2px}
+/* Phone and tablet: the station key sits right under the tuner, then sliders, album art, Up next */
+@media (max-width:1100px){
+  #tuneCol{display:contents}
+  .tunegrid{grid-area:tune}
+  #presets{grid-area:keys}
+  #nowCard{grid-area:now}
+  .face{grid-template-areas:"tune tune" "keys keys" "spec pop" "now now" "list list"}
+}
+@media (max-width:700px){
+  .face{grid-template-areas:"tune" "keys" "spec" "pop" "now" "list"}
+  #next{max-height:260px}
+}
 </style>
 </head>
 <body>
@@ -497,6 +515,7 @@ details.fold > *:not(summary){margin-top:6px}
           <button class="allBtnT" id="allBtn" aria-pressed="false" aria-label="All genres" title="All genres (A)">ALL</button>
         </div>
       </div>
+      <div class="card" id="nowCard" aria-label="Now playing"></div>
       <div class="presets" id="presets" role="group" aria-label="Station presets"></div>
     </div>
 
@@ -511,7 +530,6 @@ details.fold > *:not(summary){margin-top:6px}
       <button class="mixtog" id="popTog" aria-expanded="false" aria-controls="popReadout">Show details ▾</button>
       <div class="readout" id="popReadout"></div>
     </div>
-    <div class="card" id="nowCard" aria-label="Now playing"></div>
   </section>
 
   <section class="lower">
@@ -1128,7 +1146,27 @@ function mixFor(st) {
   S.mixCache.set(key, m); return m;
 }
 const inMix = (mix, s) => mix.gm.has(s.genre) || (s.also || []).some(g => mix.gm.has(g));
-function pick(mix, iv, hist, t, recentArtists, exclude) {
+// Picks the next song for a station without ever starting its list over.
+// 1. Its own genre range, 2. a wider genre range (in steps), 3. the whole library.
+function pickFor(st, iv, hist, t, recent, exclude) {
+  if (st.all) {
+    const s = pick(mixFor(st), iv, hist, t, recent, exclude, true);
+    return s || pick(mixFor(st), iv, hist, t, recent, exclude, false);
+  }
+  const specs = [st.spec];
+  for (let v = st.spec + 25; v < 100; v += 25) specs.push(v);
+  specs.push(100);
+  for (const spec of [...new Set(specs)]) {
+    const mix = spec === st.spec ? mixFor(st) : mixFor({ ...st, spec });
+    const s = pick(mix, iv, hist, t, recent, exclude, true);
+    if (s) return s;
+  }
+  const whole = mixFor({ all: true, dial: st.dial, spec: 100 });
+  const s = pick(whole, iv, hist, t, recent, exclude, true);
+  if (s) return s;
+  return pick(mixFor(st), iv, hist, t, recent, exclude, false);   // only if the library is tiny
+}
+function pick(mix, iv, hist, t, recentArtists, exclude, strict) {
   const pool = mix.pool, gm = mix.gm; let total = 0; const w = new Array(pool.length);
   for (let i = 0; i < pool.length; i++) {
     const s = pool[i];
@@ -1143,6 +1181,7 @@ function pick(mix, iv, hist, t, recentArtists, exclude) {
     w[i] = x; total += x;
   }
   if (total === 0) {
+    if (strict) return null;      // nothing is due here; let the caller widen the mix
     let best = null, bt = Infinity;
     for (const s of pool) { if (exclude.has(s.id)) continue; const l = hist[s.id] ?? -Infinity; if (l < bt) { bt = l; best = s; } }
     return best;
@@ -1159,12 +1198,12 @@ function projected() {
   for (const id of S.queue) { const s = S.byId.get(id); if (!s) continue; hist[id] = t; t += s.dur; recent.push(s.artist); }
   return { hist, t, recent: recent.slice(-3) };
 }
-function extendQueue(target = 5) {
+function extendQueue(target = 12) {
   const st = S.stations[S.current], mix = mixFor(st), iv = intervals(st.dial);
   let guard = 0;
   while (S.queue.length < target && guard++ < 10) {
     const p = projected(), ex = new Set(S.queue); if (S.np) ex.add(S.np.id);
-    const s = pick(mix, iv, p.hist, p.t, p.recent, ex); if (!s) break;
+    const s = pickFor(st, iv, p.hist, p.t, p.recent, ex); if (!s) break;
     S.queue.push(s.id);
   }
   renderNext();
@@ -1197,7 +1236,7 @@ function advance() {
   if (!mix.pool.length) { S.np = null; S.playing = false; renderNow(); toast(`No ${st.genre || 'songs'} in your library yet.`); return; }
   let s = null;
   while (S.queue.length && !s) { const c = S.byId.get(S.queue.shift()); if (c && inMix(mix, c)) s = c; }
-  if (!s) s = pick(mix, intervals(st.dial), S.history, now(), S.recent.slice(-3), new Set(S.np ? [S.np.id] : []));
+  if (!s) s = pickFor(st, intervals(st.dial), S.history, now(), S.recent.slice(-3), new Set(S.np ? [S.np.id] : []));
   if (!s) return;
   start(s); extendQueue();
 }
@@ -1405,7 +1444,7 @@ function buildBatch(n, t, seedHist, keep) {
   const st = S.stations[S.current], mix = mixFor(st), iv = intervals(st.dial);
   const hist = { ...S.history, ...(seedHist || {}) }, recent = S.recent.slice(-3), out = [], lastIds = [...(keep || [])];
   for (let i = 0; i < n; i++) {
-    const s = pick(mix, iv, hist, t, recent.slice(-3), new Set(lastIds.slice(-8)));
+    const s = pickFor(st, iv, hist, t, recent.slice(-3), new Set(lastIds.slice(-8)));
     if (!s) break;
     out.push(s.id); lastIds.push(s.id); hist[s.id] = t; t += s.dur; recent.push(s.artist);
   }
@@ -1891,12 +1930,22 @@ function renderProgress() {
   bar.style.width = clamp(S.np.pos / S.np.dur * 100, 0, 100) + '%';
   $('#tPos').textContent = fmtTime(S.np.pos); $('#tDur').textContent = fmtTime(S.np.dur);
 }
+// Tap a song in Up next to play it now. Songs after it stay in order.
+async function playFromQueue(id) {
+  if (S.mode === 'spotify') {
+    const idx = R.batch.indexOf(id); if (idx < 0) return;
+    try { await playIds(R.batch.slice(idx)); } catch (e) { handleRemoteError(e); }
+    return;
+  }
+  S.queue = [id, ...S.queue.filter(x => x !== id)];
+  advance();
+}
 function renderNext() {
   const st = S.stations[S.current];
   let list = S.queue, note = '';
   if (S.mode === 'spotify' && S.np && !R.foreign && R.batch.length) {
     const i = R.batch.indexOf(S.np.id);
-    list = R.batch.slice(i + 1, i + 6);
+    list = R.batch.slice(i + 1, i + 13);
     const left = R.batch.length - i - 1;
     note = R.dirty ? '<p class="muted" style="margin:8px 0 0;font-size:13px">Your dial or rating change applies from the next song.</p>'
       : `<p class="muted" style="margin:8px 0 0;font-size:13px">${left} songs lined up in Spotify. Keeps playing with your screen off.</p>`;
@@ -1904,7 +1953,7 @@ function renderNext() {
   $('#next').innerHTML = (list.length ? list.map(id => {
     const s = S.byId.get(id); if (!s) return '';
     const other = !onGenre(s, st.genre) ? `, ${esc(s.genre)}` : '';
-    return `<div class="qrow"><div style="min-width:0"><div class="tt">${esc(s.title)}</div><div class="aa">${esc(s.artist)}${other}</div></div><div class="k">${STARS(starsOf(s))}</div></div>`;
+    return `<div class="qrow" data-play="${esc(id)}" role="button" tabindex="0" title="Play now"><div style="min-width:0"><div class="tt">${esc(s.title)}</div><div class="aa">${esc(s.artist)}${other}</div></div><div class="k">${STARS(starsOf(s))}</div></div>`;
   }).join('') : '<p class="muted" style="margin:0">Nothing queued. This station needs more songs.</p>') + note;
 }
 
@@ -2090,6 +2139,8 @@ function bind() {
   $('#specRange').addEventListener('input', e => setSpec(+e.target.value));
   $('#popRange').addEventListener('input', e => setPop(+e.target.value));
   bindLineupDrag();
+  $('#next').addEventListener('click', e => { const r = e.target.closest('[data-play]'); if (r) playFromQueue(r.dataset.play); });
+  $('#next').addEventListener('keydown', e => { const r = e.target.closest('[data-play]'); if (r && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); playFromQueue(r.dataset.play); } });
   [['#specTog', '#specReadout'], ['#popTog', '#popReadout']].forEach(([b, box]) => {
     $(b).addEventListener('click', () => {
       const open = $(box).classList.toggle('open');
