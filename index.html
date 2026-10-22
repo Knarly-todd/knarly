@@ -1430,7 +1430,7 @@ async function loadLibrary(progress) {
 /* ---------- Spotify Connect: Knarly picks the songs, the Spotify app plays them ---------- */
 // Knarly hands Spotify a long run of songs at once, so music keeps going with your screen off.
 const BATCH = 40;   // about two and a half hours
-const R = Object.assign({ device: null, batch: [], lastId: null, polling: false, dirty: false, foreign: false, expect: null, expectUntil: 0 }, { batch: LS.get('batch', []) });
+const R = Object.assign({ device: null, batch: [], lastId: null, polling: false, dirty: false, foreign: false, expect: null, expectUntil: 0, topping: false }, { batch: LS.get('batch', []) });
 const isPhone = /Android|iPhone|iPad/i.test(navigator.userAgent);
 const noDevice = () => Object.assign(new Error('Spotify isn’t open. Open the Spotify app, play any song for a moment, then come back and press play.'), { noDevice: true });
 async function getDevices() { const d = await api('/me/player/devices'); return (d && d.devices) || []; }
@@ -1444,7 +1444,7 @@ async function chooseDevice() {
   const saved = S.settings.deviceName;
   // 1. whatever Spotify is playing on now, 2. a speaker you picked in Knarly, 3. this phone or computer
   const picked = R.picked && R.device ? usable.find(x => x.id === R.device.id) : null;
-  const d = usable.find(x => x.is_active) || picked || here || usable.find(x => saved && x.name === saved) || usable[0] || list[0];
+  const d = picked || usable.find(x => x.is_active) || here || usable.find(x => saved && x.name === saved) || usable[0] || list[0];
   R.picked = d === picked;
   R.device = { id: d.id, name: d.name, type: d.type }; renderStatus();
   return R.device;
@@ -1475,7 +1475,11 @@ async function playIds(ids, positionMs = 0, startAt = 0) {
   const payload = { uris: ids.map(id => S.byId.get(id).uri), position_ms: Math.max(0, Math.round(positionMs)) };
   if (startAt > 0) payload.offset = { position: startAt };
   const body = JSON.stringify(payload);
-  try { await api(`/me/player/play?device_id=${encodeURIComponent(R.device.id)}`, { method: 'PUT', body }); }
+  // Shuffle or repeat would scramble the order Knarly picked, so make sure both are off first.
+  const dev = encodeURIComponent(R.device.id);
+  await api(`/me/player/shuffle?state=false&device_id=${dev}`, { method: 'PUT' }).catch(() => {});
+  await api(`/me/player/repeat?state=off&device_id=${dev}`, { method: 'PUT' }).catch(() => {});
+  try { await api(`/me/player/play?device_id=${dev}`, { method: 'PUT', body }); }
   catch (e) {
     if (e.status !== 404) throw e;
     R.device = null; await chooseDevice();   // the device went to sleep; find it again
@@ -1499,6 +1503,27 @@ async function startStation() {
   try { await playIds([...head, ...buildBatch(BATCH - head.length, t, seed, head)]); } catch (e) { handleRemoteError(e); }
 }
 // Keep the current song, swap in fresh picks after it (used when the run is nearly used up or a dial moved).
+// Adds songs to the end of Spotify's queue. Nothing is restarted, so the current song keeps playing.
+async function topUpQueue(i) {
+  R.topping = true;
+  try {
+    const dev = R.device && R.device.id; if (!dev) return;
+    const st = S.stations[S.current], iv = intervals(st.dial);
+    let t = Date.now() + Math.max(0, S.byId.get(R.batch[i]).dur - (S.np ? S.np.pos : 0));
+    for (const id of R.batch.slice(i + 1)) t += S.byId.get(id) ? S.byId.get(id).dur : 0;
+    const hist = { ...S.history }, exclude = new Set(R.batch), recent = S.recent.slice(-3), add = [];
+    for (let k = 0; k < 20; k++) {
+      const s = pickFor(st, iv, hist, t, recent.slice(-3), exclude); if (!s) break;
+      add.push(s.id); exclude.add(s.id); hist[s.id] = t; t += s.dur; recent.push(s.artist);
+    }
+    for (const id of add) {
+      await api(`/me/player/queue?uri=${encodeURIComponent(S.byId.get(id).uri)}&device_id=${encodeURIComponent(dev)}`, { method: 'POST' });
+      R.batch.push(id); await sleep(150);
+    }
+    LS.set('batch', R.batch);
+  } catch (e) { /* tried again on the next check */ }
+  finally { R.topping = false; }
+}
 async function refreshBatch(i, progressMs) {
   const cur = R.batch[i], s = S.byId.get(cur); if (!s) return;
   // Keep what's already lined up (always, if you arranged it yourself), then add fresh picks after it.
@@ -1541,7 +1566,7 @@ async function poll() {
   try {
     const st = await api('/me/player?additional_types=track');
     if (!st || !st.item) { S.playing = false; renderTransport(); return; }
-    if (st.device && st.device.id) { R.device = { id: st.device.id, name: st.device.name, type: st.device.type }; renderStatus(); }
+    if (st.device && st.device.id && !R.picked) { R.device = { id: st.device.id, name: st.device.name, type: st.device.type }; renderStatus(); }
     const it = st.item;
     if (R.expect) {
       if (it.id === R.expect || Date.now() > R.expectUntil) R.expect = null;
@@ -1554,7 +1579,7 @@ async function poll() {
       R.lastId = it.id;
       if (i >= 0 && S.byId.has(it.id)) {
         noteStart(S.byId.get(it.id), Date.now() - S.np.pos);
-        if (S.playing && R.batch.length - i <= 10) { R.polling = false; await refreshBatch(i, S.np.pos); return; }
+        if (S.playing && R.batch.length - i <= 10 && !R.topping) topUpQueue(i);
       }
     }
     renderNow(); renderNext();
