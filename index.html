@@ -1442,7 +1442,10 @@ async function chooseDevice() {
   const usable = list.filter(x => !x.is_restricted);
   const here = usable.find(x => x.type === (isPhone ? 'Smartphone' : 'Computer'));
   const saved = S.settings.deviceName;
-  const d = usable.find(x => x.is_active) || here || usable.find(x => saved && x.name === saved) || usable[0] || list[0];
+  // 1. whatever Spotify is playing on now, 2. a speaker you picked in Knarly, 3. this phone or computer
+  const picked = R.picked && R.device ? usable.find(x => x.id === R.device.id) : null;
+  const d = usable.find(x => x.is_active) || picked || here || usable.find(x => saved && x.name === saved) || usable[0] || list[0];
+  R.picked = d === picked;
   R.device = { id: d.id, name: d.name, type: d.type }; renderStatus();
   return R.device;
 }
@@ -1468,7 +1471,7 @@ function buildBatch(n, t, seedHist, keep) {
   return out;
 }
 async function playIds(ids, positionMs = 0, startAt = 0) {
-  if (!R.device) await chooseDevice();
+  await chooseDevice();
   const payload = { uris: ids.map(id => S.byId.get(id).uri), position_ms: Math.max(0, Math.round(positionMs)) };
   if (startAt > 0) payload.offset = { position: startAt };
   const body = JSON.stringify(payload);
@@ -1510,7 +1513,7 @@ async function remoteToggle() {
   if (!S.auth) { openLogin(); return; }
   if (!S.np || (R.foreign && !R.expect) || !R.batch.length) return startStation();
   try {
-    if (!R.device) await chooseDevice();
+    await chooseDevice();
     if (S.playing) { await api(`/me/player/pause?device_id=${encodeURIComponent(R.device.id)}`, { method: 'PUT' }); S.playing = false; }
     else {
       try { await api(`/me/player/play?device_id=${encodeURIComponent(R.device.id)}`, { method: 'PUT' }); S.playing = true; }
@@ -1523,7 +1526,7 @@ async function remoteNext() {
   if (!S.auth) { openLogin(); return; }
   if (!S.np || (R.foreign && !R.expect) || !R.batch.length) return startStation();
   try {
-    if (!R.device) await chooseDevice();
+    await chooseDevice();
     await api(`/me/player/next?device_id=${encodeURIComponent(R.device.id)}`, { method: 'POST' });
     setTimeout(poll, 700);
   } catch (e) { if (e.noDevice) handleRemoteError(e); else startStation(); }
@@ -2230,7 +2233,7 @@ function bind() {
     }
     if (e.target.closest('[data-showhidden]')) { devShowHidden = !devShowHidden; renderDevices(); return; }
     const b = e.target.closest('[data-dev]'); if (!b) return;
-    R.device = { id: b.dataset.dev, name: b.dataset.name, type: b.dataset.type };
+    R.device = { id: b.dataset.dev, name: b.dataset.name, type: b.dataset.type }; R.picked = true;
     S.settings.deviceName = b.dataset.name; LS.set('settings', S.settings); renderStatus();
     if (S.playing) { try { await api('/me/player', { method: 'PUT', body: JSON.stringify({ device_ids: [R.device.id], play: true }) }); } catch (err) { toast(err.message); } }
     renderDevices();
