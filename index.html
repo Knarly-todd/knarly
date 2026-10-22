@@ -384,7 +384,7 @@ body.allmode #specCol{opacity:.55}
 #listCol{grid-area:list;align-self:stretch;min-width:0}
 #listCol h2{font-size:16px;margin:0 0 10px}
 #specCol{grid-area:spec} #tuneCol{grid-area:tune} #popCol{grid-area:pop}
-#popCol{align-self:start}
+#specCol,#popCol{align-self:stretch;width:100%}
 .emptyNow{width:fit-content;max-width:100%;margin:16px auto 0;text-align:center;padding:18px 28px}
 .emptyNow .meta{text-align:center}
 .emptyNow .meta .t{margin-left:auto;margin-right:auto}
@@ -1496,7 +1496,7 @@ async function startStation() {
 async function refreshBatch(i, progressMs) {
   const cur = R.batch[i], s = S.byId.get(cur); if (!s) return;
   // Keep what's already lined up (always, if you arranged it yourself), then add fresh picks after it.
-  const keep = (R.custom || !R.dirty) ? R.batch.slice(i + 1).filter(id => S.byId.has(id)) : [];
+  const keep = R.batch.slice(i + 1).filter(id => S.byId.has(id));
   let after = Date.now() + Math.max(0, s.dur - progressMs);
   const seed = { [cur]: Date.now() - progressMs };
   for (const id of keep) { seed[id] = after; after += S.byId.get(id).dur; }
@@ -1548,7 +1548,7 @@ async function poll() {
       R.lastId = it.id;
       if (i >= 0 && S.byId.has(it.id)) {
         noteStart(S.byId.get(it.id), Date.now() - S.np.pos);
-        if (S.playing && (R.dirty || R.batch.length - i <= 10)) { R.polling = false; await refreshBatch(i, S.np.pos); return; }
+        if (S.playing && R.batch.length - i <= 10) { R.polling = false; await refreshBatch(i, S.np.pos); return; }
       }
     }
     renderNow(); renderNext();
@@ -1830,7 +1830,27 @@ function bindKnob(svg, get, set) {
   svg.addEventListener('wheel', e => { e.preventDefault(); set(get() + (e.deltaY > 0 ? 2 : -2)); }, { passive: false });
 }
 let dialT;
-function dialChanged() { R.dirty = true; clearTimeout(dialT); dialT = setTimeout(() => { rebuildQueue(); if (!S.np) renderNow(); renderNext(); }, 160); }
+let reshapeT = null;
+// After a dial or rating change: keep the current song and the next three, then pick new songs after them.
+function scheduleReshape() {
+  if (S.mode !== 'spotify') return;
+  R.dirty = true; clearTimeout(reshapeT);
+  reshapeT = setTimeout(reshapeCue, 1500);
+  renderNext();
+}
+async function reshapeCue() {
+  if (!S.np || R.foreign || !R.batch.length) { R.dirty = false; renderNext(); return; }
+  const i = R.batch.indexOf(S.np.id); if (i < 0) { R.dirty = false; renderNext(); return; }
+  const cur = R.batch[i], progress = S.np.pos || 0;
+  const keep = R.batch.slice(i + 1, i + 4).filter(id => S.byId.has(id));
+  let t = Date.now() + Math.max(0, S.byId.get(cur).dur - progress);
+  const seed = { [cur]: Date.now() - progress };
+  for (const id of keep) { seed[id] = t; t += S.byId.get(id).dur; }
+  const tail = buildBatch(BATCH - 1 - keep.length, t, seed, [cur, ...keep]);
+  try { await playIds([cur, ...keep, ...tail], progress + 300); } catch (e) { handleRemoteError(e); }
+  R.dirty = false; renderNext();
+}
+function dialChanged() { clearTimeout(dialT); dialT = setTimeout(() => { if (S.mode !== 'spotify') { rebuildQueue(); if (!S.np) renderNow(); renderNext(); } else scheduleReshape(); }, 160); }
 function setPop(v) { v = Math.round(clamp(v, 0, 100)); const st = S.stations[S.current]; if (st.dial === v) return; st.dial = v; LS.set('stations', S.stations); renderGauges(); dialChanged(); }
 function setSpec(v) { v = Math.round(clamp(v, 0, 100)); const st = S.stations[S.current]; if (st.all) return; if (st.spec === v) return; st.spec = v; LS.set('stations', S.stations); renderGauges(); dialChanged(); }
 
@@ -2154,7 +2174,7 @@ function bind() {
   $('#nowCard').addEventListener('click', e => {
     if (e.target.id === 'skip') advance();
     else if (e.target.id === 'backToStation') startStation();
-    else if (e.target.dataset.r && S.np) { R.dirty = true; S.ratings[S.np.id] = +e.target.dataset.r; LS.set('ratings', S.ratings); renderNow(); rebuildQueue(); }
+    else if (e.target.dataset.r && S.np) { S.ratings[S.np.id] = +e.target.dataset.r; scheduleReshape(); LS.set('ratings', S.ratings); renderNow(); rebuildQueue(); }
   });
   bindKnob($('#specKnob'), () => S.stations[S.current].spec, setSpec);
   bindKnob($('#popKnob'), () => S.stations[S.current].dial, setPop);
