@@ -1435,6 +1435,7 @@ const isPhone = /Android|iPhone|iPad/i.test(navigator.userAgent);
 const noDevice = () => Object.assign(new Error('Spotify isn’t open. Open the Spotify app, play any song for a moment, then come back and press play.'), { noDevice: true });
 async function getDevices() { const d = await api('/me/player/devices'); return (d && d.devices) || []; }
 async function chooseDevice() {
+  if (R.fromSpotify && S.playing && R.device) { renderStatus(); return R.device; }   // follow what Spotify is playing
   const list = await getDevices();
   if (!list.length) throw noDevice();
   // Order: whatever Spotify is playing on right now, then this phone or computer,
@@ -1566,7 +1567,9 @@ async function poll() {
   try {
     const st = await api('/me/player?additional_types=track');
     if (!st || !st.item) { S.playing = false; renderTransport(); return; }
-    if (st.device && st.device.id && !R.picked) { R.device = { id: st.device.id, name: st.device.name, type: st.device.type }; renderStatus(); }
+    if (st.device && st.device.id && st.is_playing) {
+      R.device = { id: st.device.id, name: st.device.name, type: st.device.type }; R.picked = false; R.fromSpotify = true; renderStatus();
+    } else if (!st.is_playing) R.fromSpotify = false;
     const it = st.item;
     if (R.expect) {
       if (it.id === R.expect || Date.now() > R.expectUntil) R.expect = null;
@@ -1773,6 +1776,9 @@ async function renderDevices() {
   const el = $('#devList'), m = $('#devMsg'); m.className = 'msg'; m.textContent = 'Looking for speakers…';
   try {
     devList = await getDevices();
+    if (R.device && R.fromSpotify && !devList.some(d => d.id === R.device.id)) {
+      devList.push({ id: R.device.id, name: R.device.name, type: R.device.type || 'Speaker', is_active: true, is_restricted: false, volume_percent: null });
+    }
     const hidden = new Set(S.settings.hiddenDevices || []);
     const chosenId = R.device && R.device.id;
     const playingId = (devList.find(d => d.is_active) || {}).id;
