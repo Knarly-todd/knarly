@@ -439,6 +439,14 @@ body.allmode #specCol{opacity:.55}
   .mixtog{min-height:26px}
   .presets .preset{min-height:32px}
 }
+
+/* Collapsible sections in Library */
+details.fold{margin:18px 0 0;border-top:1px solid var(--line);padding-top:4px}
+.foldsum{cursor:pointer;list-style:none;font-weight:700;font-size:16px;min-height:44px;display:flex;align-items:center;gap:8px}
+.foldsum::-webkit-details-marker{display:none}
+.foldsum::before{content:'▸';color:var(--accent);font-size:14px;transition:transform .15s}
+details.fold[open] > .foldsum::before{transform:rotate(90deg)}
+details.fold > *:not(summary){margin-top:6px}
 </style>
 </head>
 <body>
@@ -570,7 +578,8 @@ body.allmode #specCol{opacity:.55}
     <datalist id="genreList"></datalist>
     <div class="stgrid" id="stgrid"></div>
 
-    <h3>Where songs come from</h3>
+    <details class="fold">
+      <summary class="foldsum">Where songs come from <span class="muted">(your playlists)</span></summary>
     <p>Tag a playlist with a genre and every song in it joins that station. Spotify only lets apps read playlists you made or collaborate on.</p>
     <div id="sources"></div>
     <div class="row left" style="margin-top:12px">
@@ -578,6 +587,7 @@ body.allmode #specCol{opacity:.55}
       <button class="btn" id="reloadLib" hidden>Reload library</button>
     </div>
     <div class="msg" id="plMsg" role="status"></div>
+    </details>
 
     <h3>Sort by artist</h3>
     <p>Give an artist a genre once and all their songs follow. Add a second genre for artists who fit two stations, like pop rock on both Pop and Rock.</p>
