@@ -449,6 +449,9 @@ details.fold{margin:18px 0 0;border-top:1px solid var(--line);padding-top:4px}
 details.fold[open] > .foldsum::before{transform:rotate(90deg)}
 details.fold > *:not(summary){margin-top:6px}
 
+.devrow{display:flex;gap:8px;align-items:stretch}
+.devrow .devbtn{flex:1 1 auto;min-width:0}
+.devhide{flex:none;min-height:56px;font-size:13px}
 /* Up next: longer list you can scroll and tap */
 #next{max-height:380px;overflow:auto}
 #next .qrow{cursor:pointer}
@@ -591,7 +594,7 @@ details.fold > *:not(summary){margin-top:6px}
     <div class="devlist" id="devList"></div>
     <div class="msg" id="devMsg" role="status"></div>
     <div class="row">
-      <a class="btn" href="spotify:" style="display:inline-flex;align-items:center;text-decoration:none">Open Spotify</a>
+      <a class="btn" href="https://open.spotify.com" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;text-decoration:none">Open Spotify</a>
       <button class="btn" id="devRefresh">Scan again</button>
       <button class="btn primary" id="devDone">Done</button>
     </div>
@@ -750,7 +753,7 @@ details.fold > *:not(summary){margin-top:6px}
   </div>
 </dialog>
 
-<div class="revtag" aria-hidden="true">P61</div>
+<div class="revtag" aria-hidden="true">P62</div>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script>
@@ -1737,27 +1740,34 @@ const DEV_GROUPS = [
 ];
 const DEV_ICON = { Speaker: '🔊', CastAudio: '🔊', AudioDongle: '🔊', AVR: '🔊', Smartphone: '📱', Tablet: '📱', Computer: '💻', Automobile: '🚗', TV: '📺', CastVideo: '📺', STB: '📺', GameConsole: '🎮' };
 let devList = [];
+let devShowHidden = false;
 async function renderDevices() {
   const el = $('#devList'), m = $('#devMsg'); m.className = 'msg'; m.textContent = 'Looking for speakers…';
   try {
     devList = await getDevices();
+    const hidden = new Set(S.settings.hiddenDevices || []);
     const chosenId = R.device && R.device.id;
-    const groups = DEV_GROUPS.map(([label, types]) => [label, devList.filter(d => types.includes(d.type) || (!types.length))])
-      .map(([label, list]) => [label, list]);
-    const other = devList.filter(d => !DEV_GROUPS.some(([, t]) => t.includes(d.type)));
+    const playingId = (devList.find(d => d.is_active) || {}).id;
+    // Hidden speakers stay hidden, except the one currently playing so you can always see it.
+    const shown = devList.filter(d => devShowHidden || !hidden.has(d.name) || d.id === playingId);
+    const hiddenCount = devList.filter(d => hidden.has(d.name) && d.id !== playingId).length;
+    const groups = DEV_GROUPS.map(([label, types]) => [label, shown.filter(d => types.includes(d.type))]);
+    const other = shown.filter(d => !DEV_GROUPS.some(([, t]) => t.includes(d.type)));
     if (other.length) groups.push(['Other', other]);
     el.innerHTML = groups.filter(([, l]) => l.length).map(([label, list]) => `<h3 class="devh">${label}</h3>` + list.map(d => {
-      const tags = [d.is_active ? 'playing now' : '', d.id === chosenId ? 'chosen' : '', d.is_restricted ? 'can’t be controlled' : ''].filter(Boolean).join(', ');
-      return `<button class="btn devbtn" data-dev="${esc(d.id)}" data-name="${esc(d.name)}" data-type="${esc(d.type)}" data-vol="${d.volume_percent ?? ''}" aria-pressed="${d.id === chosenId}" ${d.is_restricted ? 'disabled' : ''}>
-        <span class="di" aria-hidden="true">${DEV_ICON[d.type] || '🎵'}</span><span class="dn"><b>${esc(d.name)}</b><span class="muted">${esc(d.type)}${tags ? ' · ' + tags : ''}</span></span></button>`;
+      const tags = [d.id === playingId ? 'playing now' : '', d.id === chosenId ? 'chosen' : '', d.is_restricted ? 'can’t be controlled' : '', hidden.has(d.name) ? 'hidden' : ''].filter(Boolean).join(', ');
+      return `<div class="devrow"><button class="btn devbtn" data-dev="${esc(d.id)}" data-name="${esc(d.name)}" data-type="${esc(d.type)}" data-vol="${d.volume_percent ?? ''}" aria-pressed="${d.id === chosenId}" ${d.is_restricted ? 'disabled' : ''}>
+        <span class="di" aria-hidden="true">${DEV_ICON[d.type] || '🎵'}</span><span class="dn"><b>${esc(d.name)}</b><span class="muted">${esc(d.type)}${tags ? ' · ' + tags : ''}</span></span></button>
+        <button class="btn quiet devhide" data-hide="${esc(d.name)}">${hidden.has(d.name) ? 'Unhide' : 'Hide'}</button></div>`;
     }).join('')).join('');
+    if (hiddenCount || devShowHidden) el.insertAdjacentHTML('beforeend', `<div class="row left" style="margin-top:10px"><button class="btn quiet" data-showhidden="1">${devShowHidden ? 'Hide the hidden speakers' : `Show ${hiddenCount} hidden speaker${hiddenCount === 1 ? '' : 's'}`}</button></div>`);
     const chosen = devList.find(d => d.id === chosenId);
     const vol = $('#devVol');
     if (chosen && chosen.volume_percent != null && !chosen.is_restricted) {
       vol.hidden = false; $('#devVolName').textContent = `Volume on ${chosen.name}`; $('#devVolRange').value = chosen.volume_percent; $('#devVolVal').textContent = chosen.volume_percent + '%';
     } else vol.hidden = true;
     m.textContent = devList.length
-      ? 'Tap a speaker to send your music there. Bluetooth speakers are listed under the phone they’re connected to.'
+      ? 'Tap a speaker to send your music there. Use Hide for speakers you never use.'
       : 'No speakers found. Open Spotify on the device you want, play any song for a moment, then press Scan again.';
   } catch (e) { m.textContent = e.message; m.classList.add('err'); }
 }
@@ -2212,6 +2222,13 @@ function bind() {
   $('#devRefresh').addEventListener('click', renderDevices);
   $('#devDone').addEventListener('click', () => $('#devices').close());
   $('#devList').addEventListener('click', async e => {
+    const hb = e.target.closest('[data-hide]');
+    if (hb) {
+      const name = hb.dataset.hide, set = new Set(S.settings.hiddenDevices || []);
+      set.has(name) ? set.delete(name) : set.add(name);
+      S.settings.hiddenDevices = [...set]; LS.set('settings', S.settings); renderDevices(); return;
+    }
+    if (e.target.closest('[data-showhidden]')) { devShowHidden = !devShowHidden; renderDevices(); return; }
     const b = e.target.closest('[data-dev]'); if (!b) return;
     R.device = { id: b.dataset.dev, name: b.dataset.name, type: b.dataset.type };
     S.settings.deviceName = b.dataset.name; LS.set('settings', S.settings); renderStatus();
