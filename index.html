@@ -656,6 +656,12 @@ details.fold > *:not(summary){margin-top:6px}
     <select id="unratedSel"><option value="1">1★ Ultra-niche</option><option value="2">2★ Cult indie</option><option value="3">3★ Somewhat popular</option><option value="4">4★ Very popular</option><option value="5">5★ Megastar</option></select>
     <label class="chk" style="margin-top:10px!important"><input type="checkbox" id="autoplayChk"> Start playing when the app opens</label>
 
+    <details class="fold" id="diagFold"><summary class="foldsum">Diagnostics <span class="muted">(for troubleshooting)</span></summary>
+      <p>Shows what Spotify reports, which devices Knarly can see, and where each command was sent.</p>
+      <div class="row left"><button class="btn" id="diagRefresh">Refresh</button><button class="btn" id="diagCopy">Copy</button></div>
+      <pre id="diagOut" style="white-space:pre-wrap;font-size:12px;max-height:50vh;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:10px;margin-top:8px"></pre>
+    </details>
+
     <h3>Back up and restore</h3>
     <p>Saves your station names, genre tags, playlists, ratings and stream log to a file, so you can move them to another browser or window.</p>
     <div class="row left">
@@ -1342,7 +1348,14 @@ async function getToken() {
   if (!r.ok) { S.auth = null; LS.del('auth'); renderStatus(); throw Object.assign(new Error('Your Spotify sign-in expired. Connect again.'), { fatal: true }); }
   saveAuth(j, S.auth.clientId); return S.auth.access;
 }
+const DBG = { log: [], devices: [], poll: null };   // diagnostics, shown in Library > Diagnostics
+function dbgLog(path, method) {
+  if (!path.includes('/me/player')) return;
+  DBG.log.push({ time: new Date().toLocaleTimeString(), method: method || 'GET', path: path.split('?')[0].replace('/me/player', 'player') + (path.includes('device_id=') ? ' → ' + decodeURIComponent(path.split('device_id=')[1].split('&')[0]) : '') });
+  if (DBG.log.length > 20) DBG.log.shift();
+}
 async function api(path, opts = {}, tries = 0) {
+  dbgLog(path, opts.method);
   const r = await fetch(path.startsWith('http') ? path : API + path, { ...opts,
     headers: { Authorization: 'Bearer ' + await getToken(), ...(opts.body ? { 'Content-Type': 'application/json' } : {}), ...(opts.headers || {}) } });
   if (r.status === 429 && tries < 6) { await sleep((+r.headers.get('Retry-After') || 2) * 1000 + 250); return api(path, opts, tries + 1); }
@@ -1433,7 +1446,7 @@ const BATCH = 40;   // about two and a half hours
 const R = Object.assign({ device: null, batch: [], lastId: null, polling: false, dirty: false, foreign: false, expect: null, expectUntil: 0, topping: false }, { batch: LS.get('batch', []) });
 const isPhone = /Android|iPhone|iPad/i.test(navigator.userAgent);
 const noDevice = () => Object.assign(new Error('Spotify isn’t open. Open the Spotify app, play any song for a moment, then come back and press play.'), { noDevice: true });
-async function getDevices() { const d = await api('/me/player/devices'); return (d && d.devices) || []; }
+async function getDevices() { const d = await api('/me/player/devices'); DBG.devices = ((d && d.devices) || []).map(x => ({ name: x.name, type: x.type, id: x.id, active: x.is_active, restricted: x.is_restricted })); return (d && d.devices) || []; }
 async function chooseDevice() {
   if (R.fromSpotify && S.playing && R.device) { renderStatus(); return R.device; }   // follow what Spotify is playing
   const list = await getDevices();
@@ -1566,6 +1579,7 @@ async function poll() {
   R.polling = true;
   try {
     const st = await api('/me/player?additional_types=track');
+    DBG.poll = st ? { playingOn: st.device && st.device.name, deviceId: st.device && st.device.id, isPlaying: st.is_playing, song: st.item && st.item.name } : 'Spotify reports nothing playing';
     if (!st || !st.item) { S.playing = false; renderTransport(); return; }
     if (st.device && st.device.id && st.is_playing) {
       R.device = { id: st.device.id, name: st.device.name, type: st.device.type }; R.picked = false; R.fromSpotify = true; renderStatus();
@@ -2225,6 +2239,15 @@ function bind() {
   $('#specRange').addEventListener('input', e => setSpec(+e.target.value));
   $('#popRange').addEventListener('input', e => setPop(+e.target.value));
   bindLineupDrag();
+  const renderDiag = () => {
+    $('#diagOut').textContent = JSON.stringify({
+      knarlyFollowsSpotify: R.fromSpotify, knarlyDevice: R.device, pickedInKnarly: R.picked, knarlyThinksPlaying: S.playing,
+      spotifyReportsNow: DBG.poll, devicesSpotifySent: DBG.devices, lastCommandsSent: DBG.log.slice(-12)
+    }, null, 2);
+  };
+  $('#diagRefresh').addEventListener('click', () => { renderDiag(); });
+  $('#diagFold').addEventListener('toggle', e => { if (e.target.open) renderDiag(); });
+  $('#diagCopy').addEventListener('click', async () => { renderDiag(); try { await navigator.clipboard.writeText($('#diagOut').textContent); toast('Diagnostics copied.'); } catch (e) { toast('Select the text in the box and copy it.'); } });
   $('#next').addEventListener('click', e => { const r = e.target.closest('[data-play]'); if (r) playFromQueue(r.dataset.play); });
   $('#next').addEventListener('keydown', e => { const r = e.target.closest('[data-play]'); if (r && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); playFromQueue(r.dataset.play); } });
   [['#specTog', '#specReadout'], ['#popTog', '#popReadout']].forEach(([b, box]) => {
