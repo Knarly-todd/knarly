@@ -1552,8 +1552,9 @@ async function remoteToggle() {
   if (!S.auth) { openLogin(); return; }
   if (!S.np || (R.foreign && !R.expect) || !R.batch.length) return startStation();
   try {
-    await chooseDevice();
-    if (S.playing) { await api(`/me/player/pause?device_id=${encodeURIComponent(R.device.id)}`, { method: 'PUT' }); S.playing = false; }
+    const live = R.fromSpotify && S.playing;
+    if (!live) await chooseDevice();
+    if (S.playing) { await api(`/me/player/pause${live ? '' : `?device_id=${encodeURIComponent(R.device.id)}`}`, { method: 'PUT' }); S.playing = false; }
     else {
       try { await api(`/me/player/play?device_id=${encodeURIComponent(R.device.id)}`, { method: 'PUT' }); S.playing = true; }
       catch (e) { if (e.noDevice) throw e; return startStation(); }   // the old run finished; start a new one
@@ -1565,8 +1566,9 @@ async function remoteNext() {
   if (!S.auth) { openLogin(); return; }
   if (!S.np || (R.foreign && !R.expect) || !R.batch.length) return startStation();
   try {
-    await chooseDevice();
-    await api(`/me/player/next?device_id=${encodeURIComponent(R.device.id)}`, { method: 'POST' });
+    const live = R.fromSpotify && S.playing;   // Spotify is playing somewhere: act on that, don't move it
+    if (!live) await chooseDevice();
+    await api(`/me/player/next${live ? '' : `?device_id=${encodeURIComponent(R.device.id)}`}`, { method: 'POST' });
     setTimeout(poll, 700);
   } catch (e) { if (e.noDevice) handleRemoteError(e); else startStation(); }
 }
