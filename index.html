@@ -449,6 +449,8 @@ details.fold{margin:18px 0 0;border-top:1px solid var(--line);padding-top:4px}
 details.fold[open] > .foldsum::before{transform:rotate(90deg)}
 details.fold > *:not(summary){margin-top:6px}
 
+.helperRow{border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-top:8px;display:grid;gap:6px}
+.helperRow label{display:grid!important;gap:4px;font-size:13px}
 /* Up next: longer list you can scroll and tap */
 #next{max-height:380px;overflow:auto}
 #next .qrow{cursor:pointer}
@@ -653,15 +655,12 @@ details.fold > *:not(summary){margin-top:6px}
     <select id="unratedSel"><option value="1">1★ Ultra-niche</option><option value="2">2★ Cult indie</option><option value="3">3★ Somewhat popular</option><option value="4">4★ Very popular</option><option value="5">5★ Megastar</option></select>
     <label class="chk" style="margin-top:10px!important"><input type="checkbox" id="autoplayChk"> Start playing when the app opens</label>
 
-    <details class="fold" id="sonosFold"><summary class="foldsum">Sonos at home <span class="muted">(optional)</span></summary>
-      <p>Lets Knarly play on Sonos speakers that Spotify blocks, like a speaker on a Sonos Amp. It needs the Knarly Sonos helper running at home.</p>
-      <label for="sonosUrl">Helper address</label>
-      <input type="text" id="sonosUrl" placeholder="https://your-pc.your-tailnet.ts.net" autocomplete="off" spellcheck="false">
-      <label for="sonosKey" style="margin-top:8px">Helper key</label>
-      <input type="text" id="sonosKey" autocomplete="off" spellcheck="false" placeholder="Shown when the helper starts">
-      <div class="row left" style="margin-top:8px"><button class="btn" id="sonosTest">Save and test</button><button class="btn" id="sonosLink">Copy setup link</button></div>
-      <p class="muted" style="font-size:13px;margin-top:6px">The setup link fills these in on another device with one tap. Keep it private: it contains your key.</p>
-      <div class="msg" id="sonosMsg" role="status"></div>
+    <details class="fold" id="sonosFold"><summary class="foldsum">Sonos helpers <span class="muted">(optional)</span></summary>
+      <p>Lets Knarly play on Sonos speakers that Spotify blocks, like a speaker on a Sonos Amp. Each house needs its own helper running there.</p>
+      <div id="helperList"></div>
+      <div class="row left" style="margin-top:8px"><button class="btn" id="helperAdd">Add a helper</button><button class="btn" id="sonosTest">Save and test</button></div>
+      <p class="muted" style="font-size:13px;margin-top:6px">Copy setup link fills a helper in on another device with one tap. Keep links private: they contain the key.</p>
+      <div class="msg" id="sonosMsg" role="status" style="white-space:pre-line"></div>
     </details>
 
     <details class="fold" id="diagFold"><summary class="foldsum">Diagnostics <span class="muted">(for troubleshooting)</span></summary>
@@ -767,7 +766,7 @@ details.fold > *:not(summary){margin-top:6px}
   </div>
 </dialog>
 
-<div class="revtag" aria-hidden="true">P64</div>
+<div class="revtag" aria-hidden="true">P65</div>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script>
@@ -1451,18 +1450,30 @@ async function loadLibrary(progress) {
 /* ---------- Spotify Connect: Knarly picks the songs, the Spotify app plays them ---------- */
 // Knarly hands Spotify a long run of songs at once, so music keeps going with your screen off.
 const BATCH = 40;   // about two and a half hours
-const R = Object.assign({ device: null, batch: [], lastId: null, polling: false, dirty: false, foreign: false, expect: null, expectUntil: 0, topping: false, sonos: null, sonosLog: null }, { batch: LS.get('batch', []) });
+const R = Object.assign({ device: null, batch: [], lastId: null, polling: false, dirty: false, foreign: false, expect: null, expectUntil: 0, topping: false, sonos: null, sonosHelper: null, sonosLog: null }, { batch: LS.get('batch', []) });
 const isPhone = /Android|iPhone|iPad/i.test(navigator.userAgent);
 const noDevice = () => Object.assign(new Error('Spotify isn’t open. Open the Spotify app, play any song for a moment, then come back and press play.'), { noDevice: true });
 async function getDevices() { const d = await api('/me/player/devices'); DBG.devices = ((d && d.devices) || []).map(x => ({ name: x.name, type: x.type, id: x.id, active: x.is_active, restricted: x.is_restricted })); return (d && d.devices) || []; }
 /* ---------- Sonos at home: plays Knarly's songs through the home helper program ---------- */
 const SON = { speakers: [], lastNow: null };
-const sonosReady = () => !!((S.settings.sonosUrl || '').trim() && (S.settings.sonosKey || '').trim());
+const sonosErrNamed = (hp, e) => e && e.reach ? `Couldn’t reach the ${hp.name} helper. Check it’s running there.` : `${hp.name}: ${sonosErr(e)}`;
+// Helpers are saved as a list: [{ name, url, key }]. A single helper from P63/P64 becomes "Home".
+function helpers() {
+  if (!Array.isArray(S.settings.helpers)) {
+    S.settings.helpers = (S.settings.sonosUrl || '').trim() ? [{ name: 'Home', url: S.settings.sonosUrl.trim(), key: (S.settings.sonosKey || '').trim() }] : [];
+    delete S.settings.sonosUrl; delete S.settings.sonosKey; LS.set('settings', S.settings);
+  }
+  return S.settings.helpers.filter(x => x.url && x.key);
+}
+const helperByName = name => helpers().find(x => x.name === name) || null;
+const sonosReady = () => helpers().length > 0;
 function sonosErr(e) { return e && e.reach ? 'Couldn’t reach your Sonos helper. Check it’s running at home and the address in Library is right.' : (e && e.message) || 'Sonos helper error.'; }
-async function sonosApi(path, body) {
-  const base = (S.settings.sonosUrl || '').trim().replace(/\/+$/, '');
-  if (!base) throw new Error('Set up the Sonos helper in Library first.');
-  const headers = { 'X-Knarly-Key': (S.settings.sonosKey || '').trim() };
+// Sends a request to a helper (the one for the chosen Sonos speaker, unless another is given).
+async function sonosApi(path, body, helper) {
+  const hp = helper || helperByName(R.sonosHelper) || helpers()[0];
+  if (!hp) throw new Error('Set up a Sonos helper in Library first.');
+  const base = hp.url.trim().replace(/\/+$/, '');
+  const headers = { 'X-Knarly-Key': hp.key.trim() };
   let r;
   try {
     r = await fetch(base + path, body === undefined ? { headers } : { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -1856,21 +1867,22 @@ async function renderDevices() {
 async function renderSonosDevices() {
   const el = $('#devList');
   if (!sonosReady()) {
-    el.insertAdjacentHTML('beforeend', '<p class="muted" style="margin-top:12px">Sonos speakers that Spotify blocks can be added with the Sonos helper. Set it up in Library → Sonos at home.</p>');
+    el.insertAdjacentHTML('beforeend', '<p class="muted" style="margin-top:12px">Sonos speakers that Spotify blocks can be added with a Sonos helper. Set one up in Library → Sonos helpers.</p>');
     return;
   }
-  try {
-    const r = await sonosApi('/speakers');
-    SON.speakers = (r.speakers || []).filter(s => !s.error);
-    el.insertAdjacentHTML('beforeend', '<h3 class="devh">Sonos (via your home helper)</h3>' + SON.speakers.map(s => {
+  SON.speakers = [];
+  const results = await Promise.all(helpers().map(hp => sonosApi('/speakers', undefined, hp).then(r => ({ hp, r }), err => ({ hp, err }))));
+  for (const { hp, r, err } of results) {
+    if (err) { el.insertAdjacentHTML('beforeend', `<h3 class="devh">Sonos at ${esc(hp.name)}</h3><p class="msg err" style="margin-top:4px">${esc(sonosErrNamed(hp, err))}</p>`); continue; }
+    const list = (r.speakers || []).filter(s => !s.error).map(s => ({ ...s, helper: hp.name }));
+    SON.speakers.push(...list);
+    el.insertAdjacentHTML('beforeend', `<h3 class="devh">Sonos at ${esc(hp.name)}</h3>` + list.map(s => {
       const tags = [s.model || 'Sonos', s.coordinator !== s.uid ? 'grouped with ' + s.coordinator_name : '', R.sonos === s.uid ? 'chosen' : ''].filter(Boolean).join(' · ');
-      return `<button class="btn devbtn" data-sonos="${esc(s.uid)}" data-name="${esc(s.name)}" aria-pressed="${R.sonos === s.uid}"><span class="di" aria-hidden="true">🔊</span><span class="dn"><b>${esc(s.name)}</b><span class="muted">${esc(tags)}</span></span></button>`;
-    }).join(''));
-    const chosen = SON.speakers.find(s => s.uid === R.sonos);
-    if (chosen) { $('#devVol').hidden = false; $('#devVolName').textContent = `Volume on ${chosen.name}`; $('#devVolRange').value = chosen.volume; $('#devVolVal').textContent = chosen.volume + '%'; }
-  } catch (e) {
-    el.insertAdjacentHTML('beforeend', `<p class="msg err" style="margin-top:12px">Sonos: ${esc(sonosErr(e))}</p>`);
+      return `<button class="btn devbtn" data-sonos="${esc(s.uid)}" data-helper="${esc(hp.name)}" data-name="${esc(s.name)}" aria-pressed="${R.sonos === s.uid}"><span class="di" aria-hidden="true">🔊</span><span class="dn"><b>${esc(s.name)}</b><span class="muted">${esc(tags)}</span></span></button>`;
+    }).join('') || '<p class="muted">No Sonos speakers found there.</p>');
   }
+  const chosen = SON.speakers.find(s => s.uid === R.sonos);
+  if (chosen) { $('#devVol').hidden = false; $('#devVolName').textContent = `Volume on ${chosen.name}`; $('#devVolRange').value = chosen.volume; $('#devVolVal').textContent = chosen.volume + '%'; }
 }
 async function connectFlow(fromRedirect) {
   S.autoStart = S.settings.autoplay;
@@ -2272,29 +2284,56 @@ function bind() {
   $('#specRange').addEventListener('input', e => setSpec(+e.target.value));
   $('#popRange').addEventListener('input', e => setPop(+e.target.value));
   bindLineupDrag();
-  $('#sonosUrl').value = S.settings.sonosUrl || ''; $('#sonosKey').value = S.settings.sonosKey || '';
-  $('#sonosLink').addEventListener('click', async () => {
-    const url = $('#sonosUrl').value.trim(), key = $('#sonosKey').value.trim(), m = $('#sonosMsg'); m.className = 'msg';
-    if (!url || !key) { m.textContent = 'Enter the helper address and key first.'; m.classList.add('err'); return; }
-    const link = location.origin + location.pathname.replace(/index\.html$/, '') + '#sonos=' + encodeURIComponent(url) + '&key=' + encodeURIComponent(key);
-    try { await navigator.clipboard.writeText(link); m.textContent = 'Setup link copied. Open it once on your other device.'; }
-    catch (e) { m.textContent = link; }
+  // Library: one row per helper (name, address, key)
+  const renderHelpers = () => {
+    helpers();   // turns an older single helper into the list
+    const list = S.settings.helpers.length ? S.settings.helpers : [{ name: 'Home', url: '', key: '' }];
+    $('#helperList').innerHTML = list.map((hp, i) => `<div class="helperRow" data-i="${i}">
+      <label>Name <input type="text" class="hName" value="${esc(hp.name || '')}" placeholder="Home, Beach House…" autocomplete="off"></label>
+      <label>Address <input type="text" class="hUrl" value="${esc(hp.url || '')}" placeholder="https://your-pc.your-tailnet.ts.net" autocomplete="off" spellcheck="false"></label>
+      <label>Key <input type="text" class="hKey" value="${esc(hp.key || '')}" placeholder="Shown when the helper starts" autocomplete="off" spellcheck="false"></label>
+      <div class="row left" style="margin-top:4px"><button class="btn quiet hLink" type="button">Copy setup link</button><button class="btn quiet hDel" type="button">Remove</button></div>
+    </div>`).join('');
+  };
+  const readHelpers = () => {
+    S.settings.helpers = [...document.querySelectorAll('#helperList .helperRow')].map((row, i) => ({
+      name: row.querySelector('.hName').value.trim() || (i ? `Helper ${i + 1}` : 'Home'),
+      url: row.querySelector('.hUrl').value.trim(), key: row.querySelector('.hKey').value.trim()
+    })).filter(x => x.url || x.key);
+    LS.set('settings', S.settings);
+  };
+  renderHelpers();
+  $('#helperList').addEventListener('knarly-helpers', renderHelpers);
+  $('#helperAdd').addEventListener('click', () => {
+    readHelpers(); S.settings.helpers.push({ name: S.settings.helpers.length ? 'Beach House' : 'Home', url: '', key: '' });
+    LS.set('settings', S.settings); renderHelpers();
+  });
+  $('#helperList').addEventListener('click', async e => {
+    const row = e.target.closest('.helperRow'); if (!row) return;
+    const m = $('#sonosMsg'); m.className = 'msg';
+    if (e.target.closest('.hDel')) { row.remove(); readHelpers(); renderHelpers(); m.textContent = 'Helper removed.'; return; }
+    if (e.target.closest('.hLink')) {
+      const name = row.querySelector('.hName').value.trim(), url = row.querySelector('.hUrl').value.trim(), key = row.querySelector('.hKey').value.trim();
+      if (!url || !key) { m.textContent = 'Enter the helper address and key first.'; m.classList.add('err'); return; }
+      const link = location.origin + location.pathname.replace(/index\.html$/, '') + '#sonos=' + encodeURIComponent(url) + '&key=' + encodeURIComponent(key) + '&name=' + encodeURIComponent(name || 'Home');
+      try { await navigator.clipboard.writeText(link); m.textContent = `Setup link for ${name || 'Home'} copied. Open it once on your other device.`; }
+      catch (err) { m.textContent = link; }
+    }
   });
   $('#sonosTest').addEventListener('click', async () => {
     const m = $('#sonosMsg'); m.className = 'msg';
-    S.settings.sonosUrl = $('#sonosUrl').value.trim(); S.settings.sonosKey = $('#sonosKey').value.trim(); LS.set('settings', S.settings);
-    if (!sonosReady()) { m.textContent = 'Enter both the helper address and the key.'; m.classList.add('err'); return; }
+    readHelpers(); renderHelpers();
+    if (!sonosReady()) { m.textContent = 'Enter a helper address and key.'; m.classList.add('err'); return; }
     m.textContent = 'Checking…';
-    try {
-      const r = await sonosApi('/speakers?refresh=1');
-      const names = (r.speakers || []).map(s => s.name);
-      m.textContent = names.length ? `Connected. Found ${names.length} Sonos speaker${names.length === 1 ? '' : 's'}: ${names.join(', ')}. Pick one from the Playing on line.` : 'Connected, but the helper found no Sonos speakers. Check it’s on your home Wi-Fi.';
-    } catch (e) { m.textContent = sonosErr(e); m.classList.add('err'); }
+    const lines = await Promise.all(helpers().map(hp => sonosApi('/speakers?refresh=1', undefined, hp).then(
+      r => { const names = (r.speakers || []).map(s => s.name); return names.length ? `${hp.name}: connected, ${names.length} speaker${names.length === 1 ? '' : 's'} (${names.join(', ')}).` : `${hp.name}: connected, but no Sonos speakers found.`; },
+      err => sonosErrNamed(hp, err))));
+    m.textContent = lines.join('\n') + '\nPick a speaker from the Playing on line.';
   });
   const renderDiag = () => {
     $('#diagOut').textContent = JSON.stringify({
       spotifyReportsNow: DBG.poll, devicesSpotifySent: DBG.devices, lastCommandsSent: DBG.log.slice(-12),
-      sonos: { helper: S.settings.sonosUrl || 'not set', chosenSpeaker: R.sonos ? S.settings.sonosName : 'none', lastReport: SON.lastNow }
+      sonos: { helpers: helpers().map(x => ({ name: x.name, url: x.url })), chosenSpeaker: R.sonos ? `${S.settings.sonosName} (${R.sonosHelper})` : 'none', lastReport: SON.lastNow }
     }, null, 2);
   };
   $('#diagRefresh').addEventListener('click', () => { renderDiag(); });
@@ -2334,8 +2373,10 @@ function bind() {
     const sb = e.target.closest('[data-sonos]');
     if (sb) {   // a Sonos speaker through the home helper
       const idx = S.np ? R.batch.indexOf(S.np.id) : -1, pos = S.np ? S.np.pos : 0, wasPlaying = S.playing;
-      R.sonos = sb.dataset.sonos; R.device = { id: 'sonos:' + R.sonos, name: sb.dataset.name, type: 'Sonos' }; R.picked = true;
-      S.settings.sonosUid = R.sonos; S.settings.sonosName = sb.dataset.name; LS.set('settings', S.settings); renderStatus();
+      const prevSonos = R.sonos, prevHelper = R.sonosHelper;
+      if (prevSonos && prevSonos !== sb.dataset.sonos) sonosApi('/pause', { uid: prevSonos }, helperByName(prevHelper)).catch(() => {});
+      R.sonos = sb.dataset.sonos; R.sonosHelper = sb.dataset.helper; R.device = { id: 'sonos:' + R.sonos, name: sb.dataset.name, type: 'Sonos' }; R.picked = true;
+      S.settings.sonosUid = R.sonos; S.settings.sonosName = sb.dataset.name; S.settings.sonosHelper = R.sonosHelper; LS.set('settings', S.settings); renderStatus();
       if (wasPlaying) {
         api('/me/player/pause', { method: 'PUT' }).catch(() => {});   // stop the Spotify copy
         if (idx >= 0) playIds(R.batch, pos, idx); else startStation();
@@ -2345,8 +2386,9 @@ function bind() {
     const b = e.target.closest('[data-dev]'); if (!b) return;
     if (R.sonos) {   // leaving Sonos for a Spotify device: carry on from the same song
       const was = R.sonos, idx = S.np ? R.batch.indexOf(S.np.id) : -1, pos = S.np ? S.np.pos : 0, wasPlaying = S.playing;
-      R.sonos = null; S.settings.sonosUid = null; LS.set('settings', S.settings);
-      sonosApi('/pause', { uid: was }).catch(() => {});
+      const wasHelper = helperByName(R.sonosHelper);
+      R.sonos = null; R.sonosHelper = null; S.settings.sonosUid = null; LS.set('settings', S.settings);
+      sonosApi('/pause', { uid: was }, wasHelper).catch(() => {});
       R.device = { id: b.dataset.dev, name: b.dataset.name, type: b.dataset.type };
       S.settings.deviceName = b.dataset.name; LS.set('settings', S.settings); renderStatus();
       if (wasPlaying) { if (idx >= 0) playIds(R.batch, pos, idx); else startStation(); }
@@ -2527,8 +2569,12 @@ function readSonosSetupLink() {
   const url = (q.get('sonos') || '').trim(), key = (q.get('key') || '').trim();
   history.replaceState(null, '', location.pathname + location.search);   // remove the key from the address bar
   if (!url || !key) return false;
-  S.settings.sonosUrl = url; S.settings.sonosKey = key; LS.set('settings', S.settings);
-  return true;
+  const list = helpers();
+  const name = (q.get('name') || '').trim() || (list.length ? `Helper ${list.length + 1}` : 'Home');
+  const same = S.settings.helpers.find(x => x.url === url) || S.settings.helpers.find(x => x.name === name);
+  if (same) Object.assign(same, { name, url, key }); else S.settings.helpers.push({ name, url, key });
+  LS.set('settings', S.settings);
+  return name;
 }
 async function init() {
   const sonosLinked = readSonosSetupLink();
@@ -2551,7 +2597,14 @@ async function init() {
   if (!S.settings.tiers || !S.settings.tiers[5]) S.settings.tiers = { 2: 10000, 3: 300000, 4: 2000000, 5: 10000000 };
   $('#meter').innerHTML = Array.from({ length: 18 }, (_, i) => `<i style="animation-delay:-${(i * 0.37 % 1).toFixed(2)}s;animation-duration:${(0.6 + (i * 0.23 % 0.6)).toFixed(2)}s"></i>`).join('');
   ensureStations(); buildKnob($('#specKnob')); buildKnob($('#popKnob')); bind(); rebuildQueue(); renderAll();
-  if (sonosLinked) setTimeout(() => toast('Sonos helper saved on this device. Pick a Sonos speaker from the Playing on line.'), 400);
+  if (sonosLinked) setTimeout(() => toast(`Sonos helper “${sonosLinked}” saved on this device. Pick a speaker from the Playing on line.`), 400);
+  // A setup link opened while Knarly is already open in this tab
+  window.addEventListener('hashchange', () => {
+    const name = readSonosSetupLink();
+    if (!name) return;
+    $('#helperList').dispatchEvent(new Event('knarly-helpers'));   // refresh the Library list
+    toast(`Sonos helper “${name}” saved on this device. Pick a speaker from the Playing on line.`);
+  });
   let signedIn = false;
   try { signedIn = await finishLogin(); } catch (e) { openLogin(); $('#loginMsg').textContent = e.message; $('#loginMsg').className = 'msg err'; return; }
   if (signedIn) { connectFlow(true); return; }
@@ -2564,11 +2617,12 @@ async function init() {
   if (needLoad) { connectFlow(false); return; }
   if (S.mode === 'spotify') {
     if (!hasScope('user-read-recently-played')) { openLogin(); $('#loginMsg').textContent = 'Knarly needs one more Spotify permission. Press Sign in with Spotify.'; return; }
-    if (sonosReady() && S.settings.sonosUid) {
+    const savedHelper = helperByName(S.settings.sonosHelper) || helpers()[0];
+    if (savedHelper && S.settings.sonosUid) {
       try {
-        const n = await sonosApi(`/now?uid=${encodeURIComponent(S.settings.sonosUid)}`);
+        const n = await sonosApi(`/now?uid=${encodeURIComponent(S.settings.sonosUid)}`, undefined, savedHelper);
         if (n.playing && n.track_id && R.batch.includes(n.track_id)) {
-          R.sonos = S.settings.sonosUid; R.device = { id: 'sonos:' + R.sonos, name: n.name, type: 'Sonos' }; R.picked = true;
+          R.sonos = S.settings.sonosUid; R.sonosHelper = savedHelper.name; R.device = { id: 'sonos:' + R.sonos, name: n.name, type: 'Sonos' }; R.picked = true;
         }
       } catch (e) { /* helper not reachable (for example, away from home): use Spotify as usual */ }
     }
