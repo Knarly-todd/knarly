@@ -1490,14 +1490,14 @@ async function playIds(ids, positionMs = 0, startAt = 0) {
   if (startAt > 0) payload.offset = { position: startAt };
   const body = JSON.stringify(payload);
   // Shuffle or repeat would scramble the order Knarly picked, so make sure both are off first.
-  const dev = encodeURIComponent(R.device.id);
-  await api(`/me/player/shuffle?state=false&device_id=${dev}`, { method: 'PUT' }).catch(() => {});
-  await api(`/me/player/repeat?state=off&device_id=${dev}`, { method: 'PUT' }).catch(() => {});
-  try { await api(`/me/player/play?device_id=${dev}`, { method: 'PUT', body }); }
+  const dev = R.device.id ? encodeURIComponent(R.device.id) : '';
+  await api(`/me/player/shuffle?state=false${dev ? `&device_id=${dev}` : ''}`, { method: 'PUT' }).catch(() => {});
+  await api(`/me/player/repeat?state=off${dev ? `&device_id=${dev}` : ''}`, { method: 'PUT' }).catch(() => {});
+  try { await api(`/me/player/play${dev ? `?device_id=${dev}` : ''}`, { method: 'PUT', body }); }
   catch (e) {
     if (e.status !== 404) throw e;
     R.device = null; await chooseDevice();   // the device went to sleep; find it again
-    await api(`/me/player/play?device_id=${encodeURIComponent(R.device.id)}`, { method: 'PUT', body });
+    await api(`/me/player/play${R.device.id ? `?device_id=${encodeURIComponent(R.device.id)}` : ''}`, { method: 'PUT', body });
   }
   R.batch = ids; if (!startAt) R.dirty = false; R.foreign = false; R.lastId = ids[startAt];
   R.expect = ids[startAt]; R.expectUntil = Date.now() + 8000;   // Spotify can take a moment to report the new song
@@ -1554,9 +1554,9 @@ async function remoteToggle() {
   try {
     const live = R.fromSpotify && S.playing;
     if (!live) await chooseDevice();
-    if (S.playing) { await api(`/me/player/pause${live ? '' : `?device_id=${encodeURIComponent(R.device.id)}`}`, { method: 'PUT' }); S.playing = false; }
+    if (S.playing) { await api(`/me/player/pause${live ? '' : (R.device.id ? `?device_id=${encodeURIComponent(R.device.id)}` : '')}`, { method: 'PUT' }); S.playing = false; }
     else {
-      try { await api(`/me/player/play?device_id=${encodeURIComponent(R.device.id)}`, { method: 'PUT' }); S.playing = true; }
+      try { await api(`/me/player/play${R.device.id ? `?device_id=${encodeURIComponent(R.device.id)}` : ''}`, { method: 'PUT' }); S.playing = true; }
       catch (e) { if (e.noDevice) throw e; return startStation(); }   // the old run finished; start a new one
     }
     renderTransport(); setTimeout(poll, 800);
@@ -1568,7 +1568,7 @@ async function remoteNext() {
   try {
     const live = R.fromSpotify && S.playing;   // Spotify is playing somewhere: act on that, don't move it
     if (!live) await chooseDevice();
-    await api(`/me/player/next${live ? '' : `?device_id=${encodeURIComponent(R.device.id)}`}`, { method: 'POST' });
+    await api(`/me/player/next${live ? '' : (R.device.id ? `?device_id=${encodeURIComponent(R.device.id)}` : '')}`, { method: 'POST' });
     setTimeout(poll, 700);
   } catch (e) { if (e.noDevice) handleRemoteError(e); else startStation(); }
 }
@@ -1583,8 +1583,8 @@ async function poll() {
     const st = await api('/me/player?additional_types=track');
     DBG.poll = st ? { playingOn: st.device && st.device.name, deviceId: st.device && st.device.id, isPlaying: st.is_playing, song: st.item && st.item.name } : 'Spotify reports nothing playing';
     if (!st || !st.item) { S.playing = false; renderTransport(); return; }
-    if (st.device && st.device.id && st.is_playing) {
-      R.device = { id: st.device.id, name: st.device.name, type: st.device.type }; R.picked = false; R.fromSpotify = true; renderStatus();
+    if (st.device && st.device.name && st.is_playing) {
+      R.device = { id: st.device.id || null, name: st.device.name, type: st.device.type || 'Speaker' }; R.picked = false; R.fromSpotify = true; renderStatus();
     } else if (!st.is_playing) R.fromSpotify = false;
     const it = st.item;
     if (R.expect) {
@@ -1792,7 +1792,7 @@ async function renderDevices() {
   const el = $('#devList'), m = $('#devMsg'); m.className = 'msg'; m.textContent = 'Looking for speakers…';
   try {
     devList = await getDevices();
-    if (R.device && R.fromSpotify && !devList.some(d => d.id === R.device.id)) {
+    if (R.device && R.fromSpotify && R.device.id && !devList.some(d => d.id === R.device.id)) {
       devList.push({ id: R.device.id, name: R.device.name, type: R.device.type || 'Speaker', is_active: true, is_restricted: false, volume_percent: null });
     }
     const hidden = new Set(S.settings.hiddenDevices || []);
