@@ -1465,7 +1465,7 @@ async function chooseDevice() {
 }
 function handleRemoteError(e) {
   if (e.noDevice) { R.device = null; renderStatus(); toast(e.message); return; }
-  if (e.status === 403) { toast('Spotify wouldn’t play that. Playback control needs Spotify Premium.'); return; }
+  if (e.status === 403) { DBG.lastError = { status: 403, message: e.message }; toast(`Spotify refused: “${e.message}”. Please copy this message from Library → Diagnostics.`); return; }
   toast(e.message || 'Spotify didn’t respond.');
 }
 function noteStart(s, t) {
@@ -1570,7 +1570,7 @@ async function remoteNext() {
     if (!live) await chooseDevice();
     await api(`/me/player/next${live ? '' : (R.device.id ? `?device_id=${encodeURIComponent(R.device.id)}` : '')}`, { method: 'POST' });
     setTimeout(poll, 700);
-  } catch (e) { if (e.noDevice) handleRemoteError(e); else startStation(); }
+  } catch (e) { if (e.noDevice || e.status === 403) handleRemoteError(e); else startStation(); }
 }
 const extSong = it => ({ id: it.id, key: it.id, title: it.name, artist: (it.artists[0] || {}).name || '', artists: (it.artists || []).map(a => a.name).join(', '),
   album: (it.album || {}).name || '', art: (((it.album || {}).images || [])[1] || ((it.album || {}).images || [])[0] || {}).url || '',
@@ -2244,7 +2244,7 @@ function bind() {
   const renderDiag = () => {
     $('#diagOut').textContent = JSON.stringify({
       knarlyFollowsSpotify: R.fromSpotify, knarlyDevice: R.device, pickedInKnarly: R.picked, knarlyThinksPlaying: S.playing,
-      spotifyReportsNow: DBG.poll, devicesSpotifySent: DBG.devices, lastCommandsSent: DBG.log.slice(-12)
+      spotifyReportsNow: DBG.poll, devicesSpotifySent: DBG.devices, lastSpotifyRefusal: DBG.lastError || 'none', lastCommandsSent: DBG.log.slice(-12)
     }, null, 2);
   };
   $('#diagRefresh').addEventListener('click', () => { renderDiag(); });
