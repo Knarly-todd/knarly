@@ -659,7 +659,8 @@ details.fold > *:not(summary){margin-top:6px}
       <input type="text" id="sonosUrl" placeholder="https://your-pc.your-tailnet.ts.net" autocomplete="off" spellcheck="false">
       <label for="sonosKey" style="margin-top:8px">Helper key</label>
       <input type="text" id="sonosKey" autocomplete="off" spellcheck="false" placeholder="Shown when the helper starts">
-      <div class="row left" style="margin-top:8px"><button class="btn" id="sonosTest">Save and test</button></div>
+      <div class="row left" style="margin-top:8px"><button class="btn" id="sonosTest">Save and test</button><button class="btn" id="sonosLink">Copy setup link</button></div>
+      <p class="muted" style="font-size:13px;margin-top:6px">The setup link fills these in on another device with one tap. Keep it private: it contains your key.</p>
       <div class="msg" id="sonosMsg" role="status"></div>
     </details>
 
@@ -766,7 +767,7 @@ details.fold > *:not(summary){margin-top:6px}
   </div>
 </dialog>
 
-<div class="revtag" aria-hidden="true">P63</div>
+<div class="revtag" aria-hidden="true">P64</div>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script>
@@ -2272,6 +2273,13 @@ function bind() {
   $('#popRange').addEventListener('input', e => setPop(+e.target.value));
   bindLineupDrag();
   $('#sonosUrl').value = S.settings.sonosUrl || ''; $('#sonosKey').value = S.settings.sonosKey || '';
+  $('#sonosLink').addEventListener('click', async () => {
+    const url = $('#sonosUrl').value.trim(), key = $('#sonosKey').value.trim(), m = $('#sonosMsg'); m.className = 'msg';
+    if (!url || !key) { m.textContent = 'Enter the helper address and key first.'; m.classList.add('err'); return; }
+    const link = location.origin + location.pathname.replace(/index\.html$/, '') + '#sonos=' + encodeURIComponent(url) + '&key=' + encodeURIComponent(key);
+    try { await navigator.clipboard.writeText(link); m.textContent = 'Setup link copied. Open it once on your other device.'; }
+    catch (e) { m.textContent = link; }
+  });
   $('#sonosTest').addEventListener('click', async () => {
     const m = $('#sonosMsg'); m.className = 'msg';
     S.settings.sonosUrl = $('#sonosUrl').value.trim(); S.settings.sonosKey = $('#sonosKey').value.trim(); LS.set('settings', S.settings);
@@ -2511,7 +2519,19 @@ function canAutoSignIn() {
   let tried = false; try { tried = sessionStorage.getItem('rotsp.autoTried') === '1'; } catch (e) {}
   return !S.auth && !!S.clientId && !LS.get('noAuto', false) && !tried && addressProblem() === '';
 }
+// One-tap setup link: knarly-todd.github.io/knarly/#sonos=ADDRESS&key=KEY
+// The part after # is never sent to GitHub, so the key stays out of the public code.
+function readSonosSetupLink() {
+  if (!location.hash.startsWith('#sonos=')) return false;
+  const q = new URLSearchParams(location.hash.slice(1));
+  const url = (q.get('sonos') || '').trim(), key = (q.get('key') || '').trim();
+  history.replaceState(null, '', location.pathname + location.search);   // remove the key from the address bar
+  if (!url || !key) return false;
+  S.settings.sonosUrl = url; S.settings.sonosKey = key; LS.set('settings', S.settings);
+  return true;
+}
 async function init() {
+  const sonosLinked = readSonosSetupLink();
   LFM.data = (await IDB.get('lfm')) || {};
   LFM.tags = (await IDB.get('lfmTags')) || {};
   S.lfmGenre = (await IDB.get('lfmGenre')) || {};
@@ -2531,6 +2551,7 @@ async function init() {
   if (!S.settings.tiers || !S.settings.tiers[5]) S.settings.tiers = { 2: 10000, 3: 300000, 4: 2000000, 5: 10000000 };
   $('#meter').innerHTML = Array.from({ length: 18 }, (_, i) => `<i style="animation-delay:-${(i * 0.37 % 1).toFixed(2)}s;animation-duration:${(0.6 + (i * 0.23 % 0.6)).toFixed(2)}s"></i>`).join('');
   ensureStations(); buildKnob($('#specKnob')); buildKnob($('#popKnob')); bind(); rebuildQueue(); renderAll();
+  if (sonosLinked) setTimeout(() => toast('Sonos helper saved on this device. Pick a Sonos speaker from the Playing on line.'), 400);
   let signedIn = false;
   try { signedIn = await finishLogin(); } catch (e) { openLogin(); $('#loginMsg').textContent = e.message; $('#loginMsg').className = 'msg err'; return; }
   if (signedIn) { connectFlow(true); return; }
