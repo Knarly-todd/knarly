@@ -449,9 +449,6 @@ details.fold{margin:18px 0 0;border-top:1px solid var(--line);padding-top:4px}
 details.fold[open] > .foldsum::before{transform:rotate(90deg)}
 details.fold > *:not(summary){margin-top:6px}
 
-.devrow{display:flex;gap:8px;align-items:stretch}
-.devrow .devbtn{flex:1 1 auto;min-width:0}
-.devhide{flex:none;min-height:56px;font-size:13px}
 /* Up next: longer list you can scroll and tap */
 #next{max-height:380px;overflow:auto}
 #next .qrow{cursor:pointer}
@@ -594,7 +591,7 @@ details.fold > *:not(summary){margin-top:6px}
     <div class="devlist" id="devList"></div>
     <div class="msg" id="devMsg" role="status"></div>
     <div class="row">
-      <a class="btn" href="https://open.spotify.com" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;text-decoration:none">Open Spotify</a>
+      <a class="btn" href="spotify:" style="display:inline-flex;align-items:center;text-decoration:none">Open Spotify</a>
       <button class="btn" id="devRefresh">Scan again</button>
       <button class="btn primary" id="devDone">Done</button>
     </div>
@@ -1443,12 +1440,11 @@ async function loadLibrary(progress) {
 /* ---------- Spotify Connect: Knarly picks the songs, the Spotify app plays them ---------- */
 // Knarly hands Spotify a long run of songs at once, so music keeps going with your screen off.
 const BATCH = 40;   // about two and a half hours
-const R = Object.assign({ device: null, batch: [], lastId: null, polling: false, dirty: false, foreign: false, expect: null, expectUntil: 0, topping: false }, { batch: LS.get('batch', []) });
+const R = Object.assign({ device: null, batch: [], lastId: null, polling: false, dirty: false, foreign: false, expect: null, expectUntil: 0 }, { batch: LS.get('batch', []) });
 const isPhone = /Android|iPhone|iPad/i.test(navigator.userAgent);
 const noDevice = () => Object.assign(new Error('Spotify isn’t open. Open the Spotify app, play any song for a moment, then come back and press play.'), { noDevice: true });
 async function getDevices() { const d = await api('/me/player/devices'); DBG.devices = ((d && d.devices) || []).map(x => ({ name: x.name, type: x.type, id: x.id, active: x.is_active, restricted: x.is_restricted })); return (d && d.devices) || []; }
 async function chooseDevice() {
-  if (R.fromSpotify && S.playing && R.device) { renderStatus(); return R.device; }   // follow what Spotify is playing
   const list = await getDevices();
   if (!list.length) throw noDevice();
   // Order: whatever Spotify is playing on right now, then this phone or computer,
@@ -1456,16 +1452,13 @@ async function chooseDevice() {
   const usable = list.filter(x => !x.is_restricted);
   const here = usable.find(x => x.type === (isPhone ? 'Smartphone' : 'Computer'));
   const saved = S.settings.deviceName;
-  // 1. whatever Spotify is playing on now, 2. a speaker you picked in Knarly, 3. this phone or computer
-  const picked = R.picked && R.device ? usable.find(x => x.id === R.device.id) : null;
-  const d = picked || usable.find(x => x.is_active) || here || usable.find(x => saved && x.name === saved) || usable[0] || list[0];
-  R.picked = d === picked;
+  const d = usable.find(x => x.is_active) || here || usable.find(x => saved && x.name === saved) || usable[0] || list[0];
   R.device = { id: d.id, name: d.name, type: d.type }; renderStatus();
   return R.device;
 }
 function handleRemoteError(e) {
   if (e.noDevice) { R.device = null; renderStatus(); toast(e.message); return; }
-  if (e.status === 403) { DBG.lastError = { status: 403, message: e.message }; toast(`Spotify refused: “${e.message}”. Please copy this message from Library → Diagnostics.`); return; }
+  if (e.status === 403) { toast('Spotify wouldn’t play that. Playback control needs Spotify Premium.'); return; }
   toast(e.message || 'Spotify didn’t respond.');
 }
 function noteStart(s, t) {
@@ -1485,19 +1478,15 @@ function buildBatch(n, t, seedHist, keep) {
   return out;
 }
 async function playIds(ids, positionMs = 0, startAt = 0) {
-  await chooseDevice();
+  if (!R.device) await chooseDevice();
   const payload = { uris: ids.map(id => S.byId.get(id).uri), position_ms: Math.max(0, Math.round(positionMs)) };
   if (startAt > 0) payload.offset = { position: startAt };
   const body = JSON.stringify(payload);
-  // Shuffle or repeat would scramble the order Knarly picked, so make sure both are off first.
-  const dev = R.device.id ? encodeURIComponent(R.device.id) : '';
-  await api(`/me/player/shuffle?state=false${dev ? `&device_id=${dev}` : ''}`, { method: 'PUT' }).catch(() => {});
-  await api(`/me/player/repeat?state=off${dev ? `&device_id=${dev}` : ''}`, { method: 'PUT' }).catch(() => {});
-  try { await api(`/me/player/play${dev ? `?device_id=${dev}` : ''}`, { method: 'PUT', body }); }
+  try { await api(`/me/player/play?device_id=${encodeURIComponent(R.device.id)}`, { method: 'PUT', body }); }
   catch (e) {
     if (e.status !== 404) throw e;
     R.device = null; await chooseDevice();   // the device went to sleep; find it again
-    await api(`/me/player/play${R.device.id ? `?device_id=${encodeURIComponent(R.device.id)}` : ''}`, { method: 'PUT', body });
+    await api(`/me/player/play?device_id=${encodeURIComponent(R.device.id)}`, { method: 'PUT', body });
   }
   R.batch = ids; if (!startAt) R.dirty = false; R.foreign = false; R.lastId = ids[startAt];
   R.expect = ids[startAt]; R.expectUntil = Date.now() + 8000;   // Spotify can take a moment to report the new song
@@ -1517,31 +1506,10 @@ async function startStation() {
   try { await playIds([...head, ...buildBatch(BATCH - head.length, t, seed, head)]); } catch (e) { handleRemoteError(e); }
 }
 // Keep the current song, swap in fresh picks after it (used when the run is nearly used up or a dial moved).
-// Adds songs to the end of Spotify's queue. Nothing is restarted, so the current song keeps playing.
-async function topUpQueue(i) {
-  R.topping = true;
-  try {
-    const dev = R.device && R.device.id; if (!dev) return;
-    const st = S.stations[S.current], iv = intervals(st.dial);
-    let t = Date.now() + Math.max(0, S.byId.get(R.batch[i]).dur - (S.np ? S.np.pos : 0));
-    for (const id of R.batch.slice(i + 1)) t += S.byId.get(id) ? S.byId.get(id).dur : 0;
-    const hist = { ...S.history }, exclude = new Set(R.batch), recent = S.recent.slice(-3), add = [];
-    for (let k = 0; k < 20; k++) {
-      const s = pickFor(st, iv, hist, t, recent.slice(-3), exclude); if (!s) break;
-      add.push(s.id); exclude.add(s.id); hist[s.id] = t; t += s.dur; recent.push(s.artist);
-    }
-    for (const id of add) {
-      await api(`/me/player/queue?uri=${encodeURIComponent(S.byId.get(id).uri)}&device_id=${encodeURIComponent(dev)}`, { method: 'POST' });
-      R.batch.push(id); await sleep(150);
-    }
-    LS.set('batch', R.batch);
-  } catch (e) { /* tried again on the next check */ }
-  finally { R.topping = false; }
-}
 async function refreshBatch(i, progressMs) {
   const cur = R.batch[i], s = S.byId.get(cur); if (!s) return;
   // Keep what's already lined up (always, if you arranged it yourself), then add fresh picks after it.
-  const keep = R.batch.slice(i + 1).filter(id => S.byId.has(id));
+  const keep = (R.custom || !R.dirty) ? R.batch.slice(i + 1).filter(id => S.byId.has(id)) : [];
   let after = Date.now() + Math.max(0, s.dur - progressMs);
   const seed = { [cur]: Date.now() - progressMs };
   for (const id of keep) { seed[id] = after; after += S.byId.get(id).dur; }
@@ -1552,11 +1520,10 @@ async function remoteToggle() {
   if (!S.auth) { openLogin(); return; }
   if (!S.np || (R.foreign && !R.expect) || !R.batch.length) return startStation();
   try {
-    const live = R.fromSpotify && S.playing;
-    if (!live) await chooseDevice();
-    if (S.playing) { await api(`/me/player/pause${live ? '' : (R.device.id ? `?device_id=${encodeURIComponent(R.device.id)}` : '')}`, { method: 'PUT' }); S.playing = false; }
+    if (!R.device) await chooseDevice();
+    if (S.playing) { await api(`/me/player/pause?device_id=${encodeURIComponent(R.device.id)}`, { method: 'PUT' }); S.playing = false; }
     else {
-      try { await api(`/me/player/play${R.device.id ? `?device_id=${encodeURIComponent(R.device.id)}` : ''}`, { method: 'PUT' }); S.playing = true; }
+      try { await api(`/me/player/play?device_id=${encodeURIComponent(R.device.id)}`, { method: 'PUT' }); S.playing = true; }
       catch (e) { if (e.noDevice) throw e; return startStation(); }   // the old run finished; start a new one
     }
     renderTransport(); setTimeout(poll, 800);
@@ -1566,11 +1533,10 @@ async function remoteNext() {
   if (!S.auth) { openLogin(); return; }
   if (!S.np || (R.foreign && !R.expect) || !R.batch.length) return startStation();
   try {
-    const live = R.fromSpotify && S.playing;   // Spotify is playing somewhere: act on that, don't move it
-    if (!live) await chooseDevice();
-    await api(`/me/player/next${live ? '' : (R.device.id ? `?device_id=${encodeURIComponent(R.device.id)}` : '')}`, { method: 'POST' });
+    if (!R.device) await chooseDevice();
+    await api(`/me/player/next?device_id=${encodeURIComponent(R.device.id)}`, { method: 'POST' });
     setTimeout(poll, 700);
-  } catch (e) { if (e.noDevice || e.status === 403) handleRemoteError(e); else startStation(); }
+  } catch (e) { if (e.noDevice) handleRemoteError(e); else startStation(); }
 }
 const extSong = it => ({ id: it.id, key: it.id, title: it.name, artist: (it.artists[0] || {}).name || '', artists: (it.artists || []).map(a => a.name).join(', '),
   album: (it.album || {}).name || '', art: (((it.album || {}).images || [])[1] || ((it.album || {}).images || [])[0] || {}).url || '',
@@ -1583,9 +1549,7 @@ async function poll() {
     const st = await api('/me/player?additional_types=track');
     DBG.poll = st ? { playingOn: st.device && st.device.name, deviceId: st.device && st.device.id, isPlaying: st.is_playing, song: st.item && st.item.name } : 'Spotify reports nothing playing';
     if (!st || !st.item) { S.playing = false; renderTransport(); return; }
-    if (st.device && st.device.name && st.is_playing) {
-      R.device = { id: st.device.id || null, name: st.device.name, type: st.device.type || 'Speaker' }; R.picked = false; R.fromSpotify = true; renderStatus();
-    } else if (!st.is_playing) R.fromSpotify = false;
+    if (st.device && st.device.id) { R.device = { id: st.device.id, name: st.device.name, type: st.device.type }; renderStatus(); }
     const it = st.item;
     if (R.expect) {
       if (it.id === R.expect || Date.now() > R.expectUntil) R.expect = null;
@@ -1598,7 +1562,7 @@ async function poll() {
       R.lastId = it.id;
       if (i >= 0 && S.byId.has(it.id)) {
         noteStart(S.byId.get(it.id), Date.now() - S.np.pos);
-        if (S.playing && R.batch.length - i <= 10 && !R.topping) topUpQueue(i);
+        if (S.playing && (R.dirty || R.batch.length - i <= 10)) { R.polling = false; await refreshBatch(i, S.np.pos); return; }
       }
     }
     renderNow(); renderNext();
@@ -1787,37 +1751,27 @@ const DEV_GROUPS = [
 ];
 const DEV_ICON = { Speaker: '🔊', CastAudio: '🔊', AudioDongle: '🔊', AVR: '🔊', Smartphone: '📱', Tablet: '📱', Computer: '💻', Automobile: '🚗', TV: '📺', CastVideo: '📺', STB: '📺', GameConsole: '🎮' };
 let devList = [];
-let devShowHidden = false;
 async function renderDevices() {
   const el = $('#devList'), m = $('#devMsg'); m.className = 'msg'; m.textContent = 'Looking for speakers…';
   try {
     devList = await getDevices();
-    if (R.device && R.fromSpotify && R.device.id && !devList.some(d => d.id === R.device.id)) {
-      devList.push({ id: R.device.id, name: R.device.name, type: R.device.type || 'Speaker', is_active: true, is_restricted: false, volume_percent: null });
-    }
-    const hidden = new Set(S.settings.hiddenDevices || []);
     const chosenId = R.device && R.device.id;
-    const playingId = (devList.find(d => d.is_active) || {}).id;
-    // Hidden speakers stay hidden, except the one currently playing so you can always see it.
-    const shown = devList.filter(d => devShowHidden || !hidden.has(d.name) || d.id === playingId);
-    const hiddenCount = devList.filter(d => hidden.has(d.name) && d.id !== playingId).length;
-    const groups = DEV_GROUPS.map(([label, types]) => [label, shown.filter(d => types.includes(d.type))]);
-    const other = shown.filter(d => !DEV_GROUPS.some(([, t]) => t.includes(d.type)));
+    const groups = DEV_GROUPS.map(([label, types]) => [label, devList.filter(d => types.includes(d.type) || (!types.length))])
+      .map(([label, list]) => [label, list]);
+    const other = devList.filter(d => !DEV_GROUPS.some(([, t]) => t.includes(d.type)));
     if (other.length) groups.push(['Other', other]);
     el.innerHTML = groups.filter(([, l]) => l.length).map(([label, list]) => `<h3 class="devh">${label}</h3>` + list.map(d => {
-      const tags = [d.id === playingId ? 'playing now' : '', d.id === chosenId ? 'chosen' : '', d.is_restricted ? 'can’t be controlled' : '', hidden.has(d.name) ? 'hidden' : ''].filter(Boolean).join(', ');
-      return `<div class="devrow"><button class="btn devbtn" data-dev="${esc(d.id)}" data-name="${esc(d.name)}" data-type="${esc(d.type)}" data-vol="${d.volume_percent ?? ''}" aria-pressed="${d.id === chosenId}" ${d.is_restricted ? 'disabled' : ''}>
-        <span class="di" aria-hidden="true">${DEV_ICON[d.type] || '🎵'}</span><span class="dn"><b>${esc(d.name)}</b><span class="muted">${esc(d.type)}${tags ? ' · ' + tags : ''}</span></span></button>
-        <button class="btn quiet devhide" data-hide="${esc(d.name)}">${hidden.has(d.name) ? 'Unhide' : 'Hide'}</button></div>`;
+      const tags = [d.is_active ? 'playing now' : '', d.id === chosenId ? 'chosen' : '', d.is_restricted ? 'can’t be controlled' : ''].filter(Boolean).join(', ');
+      return `<button class="btn devbtn" data-dev="${esc(d.id)}" data-name="${esc(d.name)}" data-type="${esc(d.type)}" data-vol="${d.volume_percent ?? ''}" aria-pressed="${d.id === chosenId}" ${d.is_restricted ? 'disabled' : ''}>
+        <span class="di" aria-hidden="true">${DEV_ICON[d.type] || '🎵'}</span><span class="dn"><b>${esc(d.name)}</b><span class="muted">${esc(d.type)}${tags ? ' · ' + tags : ''}</span></span></button>`;
     }).join('')).join('');
-    if (hiddenCount || devShowHidden) el.insertAdjacentHTML('beforeend', `<div class="row left" style="margin-top:10px"><button class="btn quiet" data-showhidden="1">${devShowHidden ? 'Hide the hidden speakers' : `Show ${hiddenCount} hidden speaker${hiddenCount === 1 ? '' : 's'}`}</button></div>`);
     const chosen = devList.find(d => d.id === chosenId);
     const vol = $('#devVol');
     if (chosen && chosen.volume_percent != null && !chosen.is_restricted) {
       vol.hidden = false; $('#devVolName').textContent = `Volume on ${chosen.name}`; $('#devVolRange').value = chosen.volume_percent; $('#devVolVal').textContent = chosen.volume_percent + '%';
     } else vol.hidden = true;
     m.textContent = devList.length
-      ? 'Tap a speaker to send your music there. Use Hide for speakers you never use.'
+      ? 'Tap a speaker to send your music there. Bluetooth speakers are listed under the phone they’re connected to.'
       : 'No speakers found. Open Spotify on the device you want, play any song for a moment, then press Scan again.';
   } catch (e) { m.textContent = e.message; m.classList.add('err'); }
 }
@@ -1890,27 +1844,7 @@ function bindKnob(svg, get, set) {
   svg.addEventListener('wheel', e => { e.preventDefault(); set(get() + (e.deltaY > 0 ? 2 : -2)); }, { passive: false });
 }
 let dialT;
-let reshapeT = null;
-// After a dial or rating change: keep the current song and the next three, then pick new songs after them.
-function scheduleReshape() {
-  if (S.mode !== 'spotify') return;
-  R.dirty = true; clearTimeout(reshapeT);
-  reshapeT = setTimeout(reshapeCue, 1500);
-  renderNext();
-}
-async function reshapeCue() {
-  if (!S.np || R.foreign || !R.batch.length) { R.dirty = false; renderNext(); return; }
-  const i = R.batch.indexOf(S.np.id); if (i < 0) { R.dirty = false; renderNext(); return; }
-  const cur = R.batch[i], progress = S.np.pos || 0;
-  const keep = R.batch.slice(i + 1, i + 4).filter(id => S.byId.has(id));
-  let t = Date.now() + Math.max(0, S.byId.get(cur).dur - progress);
-  const seed = { [cur]: Date.now() - progress };
-  for (const id of keep) { seed[id] = t; t += S.byId.get(id).dur; }
-  const tail = buildBatch(BATCH - 1 - keep.length, t, seed, [cur, ...keep]);
-  try { await playIds([cur, ...keep, ...tail], progress + 300); } catch (e) { handleRemoteError(e); }
-  R.dirty = false; renderNext();
-}
-function dialChanged() { clearTimeout(dialT); dialT = setTimeout(() => { if (S.mode !== 'spotify') { rebuildQueue(); if (!S.np) renderNow(); renderNext(); } else scheduleReshape(); }, 160); }
+function dialChanged() { R.dirty = true; clearTimeout(dialT); dialT = setTimeout(() => { rebuildQueue(); if (!S.np) renderNow(); renderNext(); }, 160); }
 function setPop(v) { v = Math.round(clamp(v, 0, 100)); const st = S.stations[S.current]; if (st.dial === v) return; st.dial = v; LS.set('stations', S.stations); renderGauges(); dialChanged(); }
 function setSpec(v) { v = Math.round(clamp(v, 0, 100)); const st = S.stations[S.current]; if (st.all) return; if (st.spec === v) return; st.spec = v; LS.set('stations', S.stations); renderGauges(); dialChanged(); }
 
@@ -2234,7 +2168,7 @@ function bind() {
   $('#nowCard').addEventListener('click', e => {
     if (e.target.id === 'skip') advance();
     else if (e.target.id === 'backToStation') startStation();
-    else if (e.target.dataset.r && S.np) { S.ratings[S.np.id] = +e.target.dataset.r; scheduleReshape(); LS.set('ratings', S.ratings); renderNow(); rebuildQueue(); }
+    else if (e.target.dataset.r && S.np) { R.dirty = true; S.ratings[S.np.id] = +e.target.dataset.r; LS.set('ratings', S.ratings); renderNow(); rebuildQueue(); }
   });
   bindKnob($('#specKnob'), () => S.stations[S.current].spec, setSpec);
   bindKnob($('#popKnob'), () => S.stations[S.current].dial, setPop);
@@ -2243,8 +2177,7 @@ function bind() {
   bindLineupDrag();
   const renderDiag = () => {
     $('#diagOut').textContent = JSON.stringify({
-      knarlyFollowsSpotify: R.fromSpotify, knarlyDevice: R.device, pickedInKnarly: R.picked, knarlyThinksPlaying: S.playing,
-      spotifyReportsNow: DBG.poll, devicesSpotifySent: DBG.devices, lastSpotifyRefusal: DBG.lastError || 'none', lastCommandsSent: DBG.log.slice(-12)
+      spotifyReportsNow: DBG.poll, devicesSpotifySent: DBG.devices, lastCommandsSent: DBG.log.slice(-12)
     }, null, 2);
   };
   $('#diagRefresh').addEventListener('click', () => { renderDiag(); });
@@ -2281,15 +2214,8 @@ function bind() {
   $('#devRefresh').addEventListener('click', renderDevices);
   $('#devDone').addEventListener('click', () => $('#devices').close());
   $('#devList').addEventListener('click', async e => {
-    const hb = e.target.closest('[data-hide]');
-    if (hb) {
-      const name = hb.dataset.hide, set = new Set(S.settings.hiddenDevices || []);
-      set.has(name) ? set.delete(name) : set.add(name);
-      S.settings.hiddenDevices = [...set]; LS.set('settings', S.settings); renderDevices(); return;
-    }
-    if (e.target.closest('[data-showhidden]')) { devShowHidden = !devShowHidden; renderDevices(); return; }
     const b = e.target.closest('[data-dev]'); if (!b) return;
-    R.device = { id: b.dataset.dev, name: b.dataset.name, type: b.dataset.type }; R.picked = true;
+    R.device = { id: b.dataset.dev, name: b.dataset.name, type: b.dataset.type };
     S.settings.deviceName = b.dataset.name; LS.set('settings', S.settings); renderStatus();
     if (S.playing) { try { await api('/me/player', { method: 'PUT', body: JSON.stringify({ device_ids: [R.device.id], play: true }) }); } catch (err) { toast(err.message); } }
     renderDevices();
