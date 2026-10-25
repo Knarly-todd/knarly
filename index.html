@@ -766,7 +766,7 @@ details.fold > *:not(summary){margin-top:6px}
   </div>
 </dialog>
 
-<div class="revtag" aria-hidden="true">P65</div>
+<div class="revtag" aria-hidden="true">P66</div>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script>
@@ -1450,7 +1450,7 @@ async function loadLibrary(progress) {
 /* ---------- Spotify Connect: Knarly picks the songs, the Spotify app plays them ---------- */
 // Knarly hands Spotify a long run of songs at once, so music keeps going with your screen off.
 const BATCH = 40;   // about two and a half hours
-const R = Object.assign({ device: null, batch: [], lastId: null, polling: false, dirty: false, foreign: false, expect: null, expectUntil: 0, topping: false, sonos: null, sonosHelper: null, sonosLog: null }, { batch: LS.get('batch', []) });
+const R = Object.assign({ device: null, batch: [], lastId: null, polling: false, dirty: false, foreign: false, expect: null, expectUntil: 0, topping: false, sonos: null, sonosHelper: null, sonosLog: null, sonosFails: 0 }, { batch: LS.get('batch', []) });
 const isPhone = /Android|iPhone|iPad/i.test(navigator.userAgent);
 const noDevice = () => Object.assign(new Error('Spotify isn’t open. Open the Spotify app, play any song for a moment, then come back and press play.'), { noDevice: true });
 async function getDevices() { const d = await api('/me/player/devices'); DBG.devices = ((d && d.devices) || []).map(x => ({ name: x.name, type: x.type, id: x.id, active: x.is_active, restricted: x.is_restricted })); return (d && d.devices) || []; }
@@ -1510,6 +1510,13 @@ async function sonosTopUp(i) {
     if (add.length) { await sonosApi('/add', { uid: R.sonos, tracks: add }); R.batch.push(...add); LS.set('batch', R.batch); renderNext(); }
   } catch (e) { /* tried again on the next song */ }
   finally { R.topping = false; }
+}
+// Stop using the Sonos helper and go back to Spotify devices (the home speaker is left as it is).
+function leaveSonos(dev) {
+  R.sonos = null; R.sonosHelper = null; R.sonosFails = 0; R.lastId = null; R.picked = false;
+  S.settings.sonosUid = null; LS.set('settings', S.settings);
+  R.device = dev && dev.id ? { id: dev.id, name: dev.name, type: dev.type } : null;
+  renderStatus();
 }
 async function chooseDevice() {
   if (R.sonos) return R.device;
@@ -1631,7 +1638,18 @@ async function poll() {
   if (S.mode !== 'spotify' || !S.auth || R.polling) return;
   R.polling = true;
   try {
-    const st = R.sonos ? await sonosNow() : await api('/me/player?additional_types=track');
+    let st;
+    if (R.sonos) {
+      const sp = await api('/me/player?additional_types=track').catch(() => null);
+      if (sp && sp.is_playing && sp.device && sp.device.id && sp.device.name !== (R.device && R.device.name)) {
+        leaveSonos(sp.device);
+        toast(`Spotify is playing on ${sp.device.name}, so Knarly switched to it.`);
+        st = sp;
+      } else {
+        st = await sonosNow();
+        R.sonosFails = 0;
+      }
+    } else st = await api('/me/player?additional_types=track');
     DBG.poll = st ? { playingOn: st.device && st.device.name, deviceId: st.device && st.device.id, isPlaying: st.is_playing, song: st.item && st.item.name } : 'Spotify reports nothing playing';
     if (!st || !st.item) { S.playing = false; renderTransport(); return; }
     if (st.device && st.device.id) { R.device = { id: st.device.id, name: st.device.name, type: st.device.type }; renderStatus(); }
@@ -1654,7 +1672,12 @@ async function poll() {
     }
     if (R.sonos && R.sonosLog && R.sonosLog[P.ID] === it.id) R.sonosLog[P.MS] = Math.max(R.sonosLog[P.MS], S.np.pos);
     renderNow(); renderNext();
-  } catch (e) { if (e.fatal) toast(e.message); }
+  } catch (e) {
+    if (R.sonos && e.reach) {
+      R.sonosFails = (R.sonosFails || 0) + 1;
+      if (R.sonosFails >= 2) { leaveSonos(null); toast('Can’t reach the Sonos helper, so Knarly switched back to Spotify.'); }
+    } else if (e.fatal) toast(e.message);
+  }
   finally { R.polling = false; }
 }
 // Spotify's listening history fills in the plays that happened while Knarly was closed.
@@ -2618,7 +2641,9 @@ async function init() {
   if (S.mode === 'spotify') {
     if (!hasScope('user-read-recently-played')) { openLogin(); $('#loginMsg').textContent = 'Knarly needs one more Spotify permission. Press Sign in with Spotify.'; return; }
     const savedHelper = helperByName(S.settings.sonosHelper) || helpers()[0];
-    if (savedHelper && S.settings.sonosUid) {
+    const spNow = savedHelper && S.settings.sonosUid ? await api('/me/player?additional_types=track').catch(() => null) : null;
+    const spotifyBusy = !!(spNow && spNow.is_playing && spNow.device && spNow.device.id);
+    if (savedHelper && S.settings.sonosUid && !spotifyBusy) {
       try {
         const n = await sonosApi(`/now?uid=${encodeURIComponent(S.settings.sonosUid)}`, undefined, savedHelper);
         if (n.playing && n.track_id && R.batch.includes(n.track_id)) {
