@@ -655,6 +655,13 @@ details.fold > *:not(summary){margin-top:6px}
     <select id="unratedSel"><option value="1">1★ Ultra-niche</option><option value="2">2★ Cult indie</option><option value="3">3★ Somewhat popular</option><option value="4">4★ Very popular</option><option value="5">5★ Megastar</option></select>
     <label class="chk" style="margin-top:10px!important"><input type="checkbox" id="autoplayChk"> Start playing when the app opens</label>
 
+    <details class="fold" id="carFold"><summary class="foldsum">Car playlists <span class="muted">(Android Auto)</span></summary>
+      <p>Knarly saves each station’s upcoming songs as a private Spotify playlist, such as “Knarly 1 · Rock”. In the car, open Spotify and play one; the car’s own buttons then work as usual. Playlists refresh when Knarly opens (at most every few hours), when you change a station’s dials, and when you tap the button.</p>
+      <label class="chk"><input type="checkbox" id="carAuto"> Keep car playlists updated</label>
+      <div class="row left" style="margin-top:8px"><button class="btn" id="carNow">Update car playlists now</button><button class="btn" id="carReauth" hidden>Reconnect Spotify</button></div>
+      <div class="msg" id="carMsg" role="status"></div>
+    </details>
+
     <details class="fold" id="sonosFold"><summary class="foldsum">Sonos helpers <span class="muted">(optional)</span></summary>
       <p>Lets Knarly play on Sonos speakers that Spotify blocks, like a speaker on a Sonos Amp. Each house needs its own helper running there.</p>
       <div id="helperList"></div>
@@ -766,7 +773,7 @@ details.fold > *:not(summary){margin-top:6px}
   </div>
 </dialog>
 
-<div class="revtag" aria-hidden="true">P68</div>
+<div class="revtag" aria-hidden="true">P69</div>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script>
@@ -1292,7 +1299,7 @@ setInterval(() => {
 
 /* ---------- Spotify: sign-in (Authorization Code with PKCE, no secret needed) ---------- */
 const AUTH_URL = 'https://accounts.spotify.com/authorize', TOKEN_URL = 'https://accounts.spotify.com/api/token', API = 'https://api.spotify.com/v1';
-const SCOPES = 'user-library-read playlist-read-private playlist-read-collaborative user-read-private user-read-playback-state user-modify-playback-state user-read-currently-playing user-read-recently-played';
+const SCOPES = 'user-library-read playlist-read-private playlist-read-collaborative playlist-modify-private user-read-private user-read-playback-state user-modify-playback-state user-read-currently-playing user-read-recently-played';
 const hasScope = sc => !!(S.auth && (S.auth.scope || '').split(' ').includes(sc));
 const redirectUri = () => location.origin + location.pathname.replace(/index\.html$/, '');
 const fileName = () => decodeURIComponent(location.pathname.split('/').pop() || 'rotation-spotify.html');
@@ -1392,6 +1399,7 @@ async function findPlaylists() {
       if (!p) continue;
       const mine = (p.owner && p.owner.id === me.id) || p.collaborative;
       const total = (p.items && p.items.total) ?? (p.tracks && p.tracks.total) ?? 0;
+      if (Object.values(carPlaylistIds()).includes(p.id)) continue;   // Knarly's own car playlists
       out.push({ id: p.id, name: p.name, total, mine });
     }
     url = d.next;
@@ -1561,6 +1569,55 @@ function noteStart(s, t) {
   LS.set('history', S.history);
 }
 // Pick n songs for the current station, as if starting at time t.
+/* ---------- Car playlists ----------
+   Android Auto's Spotify app ignores outside requests to play a list of songs, so Knarly writes each station's
+   upcoming songs into a private Spotify playlist ("Knarly 1 · Rock" …). Play that playlist from Spotify in the car. */
+const CAR_SONGS = 60;   // about four hours per station
+const carName = i => i === ALL ? 'Knarly ALL · Every genre' : `Knarly ${i + 1} · ${S.stations[i].genre}`;
+function carPlaylistIds() { if (!S.settings.carPlaylists) S.settings.carPlaylists = {}; return S.settings.carPlaylists; }
+function picksForStation(i, n) {
+  const was = S.current;
+  S.current = i;
+  try { return buildBatch(n, Date.now()); } finally { S.current = was; }
+}
+async function updateCarPlaylist(i) {
+  const ids = carPlaylistIds();
+  if (i !== ALL && !mixFor(S.stations[i]).pool.length) return 'empty';   // no songs on this station yet
+  const songs = picksForStation(i, CAR_SONGS).map(id => S.byId.get(id)).filter(s => s && s.uri);
+  if (!songs.length) return 'empty';
+  const desc = `Made by Knarly from your ${i === ALL ? 'whole library' : S.stations[i].genre + ' station'}. Updated ${new Date().toLocaleString()}. Your music. Your rules.`;
+  const body = JSON.stringify({ uris: songs.map(s => s.uri) });
+  if (ids[i]) {
+    try {
+      await api(`/playlists/${ids[i]}/items`, { method: 'PUT', body });
+      await api(`/playlists/${ids[i]}`, { method: 'PUT', body: JSON.stringify({ name: carName(i), description: desc }) }).catch(() => {});
+      return 'updated';
+    } catch (e) { if (e.status !== 404) throw e; delete ids[i]; }   // the playlist was deleted in Spotify: make a new one
+  }
+  const pl = await api('/me/playlists', { method: 'POST', body: JSON.stringify({ name: carName(i), public: false, description: desc }) });
+  ids[i] = pl.id; LS.set('settings', S.settings);
+  await api(`/playlists/${pl.id}/items`, { method: 'PUT', body });
+  return 'created';
+}
+let carBusy = false;
+async function updateCarPlaylists(report, only) {
+  if (carBusy || S.mode !== 'spotify' || !S.auth) return;
+  if (!hasScope('playlist-modify-private')) { report('Knarly needs permission to save playlists. Tap Reconnect Spotify below.', true); return; }
+  carBusy = true;
+  const list = only != null ? [only] : [...Array(10).keys(), ALL];
+  let made = 0, done = 0;
+  try {
+    for (const i of list) {
+      report(`Updating ${carName(i)}…`);
+      const r = await updateCarPlaylist(i);
+      if (r === 'created') made++;
+      if (r !== 'empty') done++;
+    }
+    S.settings.carUpdated = Date.now(); LS.set('settings', S.settings);
+    report(only != null ? `${carName(only)} updated.` : `Updated ${done} car playlist${done === 1 ? '' : 's'}${made ? `, ${made} new` : ''}. In the car, open Spotify and play a "Knarly" playlist.`);
+  } catch (e) { report(`Couldn’t update car playlists: ${e.message}`, true); }
+  finally { carBusy = false; }
+}
 function buildBatch(n, t, seedHist, keep) {
   const st = S.stations[S.current], mix = mixFor(st), iv = intervals(st.dial);
   const hist = { ...S.history, ...(seedHist || {}) }, recent = S.recent.slice(-3), out = [], lastIds = [...(keep || [])];
@@ -1998,7 +2055,11 @@ function bindKnob(svg, get, set) {
   svg.addEventListener('wheel', e => { e.preventDefault(); set(get() + (e.deltaY > 0 ? 2 : -2)); }, { passive: false });
 }
 let dialT;
-function dialChanged() { R.dirty = true; clearTimeout(dialT); dialT = setTimeout(() => { rebuildQueue(); if (!S.np) renderNow(); renderNext(); }, 160); }
+let carT;
+function dialChanged() {
+  R.dirty = true; clearTimeout(dialT); dialT = setTimeout(() => { rebuildQueue(); if (!S.np) renderNow(); renderNext(); }, 160);
+  if (S.settings.carAuto !== false && S.settings.carUpdated) { clearTimeout(carT); const i = S.current; carT = setTimeout(() => updateCarPlaylists(() => {}, i), 15000); }
+}
 function setPop(v) { v = Math.round(clamp(v, 0, 100)); const st = S.stations[S.current]; if (st.dial === v) return; st.dial = v; LS.set('stations', S.stations); renderGauges(); dialChanged(); }
 function setSpec(v) { v = Math.round(clamp(v, 0, 100)); const st = S.stations[S.current]; if (st.all) return; if (st.spec === v) return; st.spec = v; LS.set('stations', S.stations); renderGauges(); dialChanged(); }
 
@@ -2329,6 +2390,17 @@ function bind() {
   $('#specRange').addEventListener('input', e => setSpec(+e.target.value));
   $('#popRange').addEventListener('input', e => setPop(+e.target.value));
   bindLineupDrag();
+  const carReport = (t, err) => { const m = $('#carMsg'); if (!m) return; m.className = 'msg' + (err ? ' err' : ''); m.textContent = t; $('#carReauth').hidden = !/permission/.test(t); };
+  $('#carAuto').checked = S.settings.carAuto !== false;
+  $('#carAuto').addEventListener('change', e => { S.settings.carAuto = e.target.checked; LS.set('settings', S.settings); });
+  $('#carNow').addEventListener('click', () => updateCarPlaylists(carReport));
+  $('#carReauth').addEventListener('click', () => { $('#lib').close(); openLogin(); });
+  $('#carFold').addEventListener('toggle', e => {
+    if (!e.target.open) return;
+    const t = S.settings.carUpdated;
+    carReport(!hasScope('playlist-modify-private') ? 'Knarly needs permission to save playlists. Tap Reconnect Spotify below.'
+      : t ? `Last updated ${new Date(t).toLocaleString()}.` : 'Not created yet. Tap Update car playlists now.', !hasScope('playlist-modify-private'));
+  });
   // Library: one row per helper (name, address, key)
   const renderHelpers = () => {
     helpers();   // turns an older single helper into the list
@@ -2676,6 +2748,8 @@ async function init() {
     await poll(); syncRecent();
     if (!R.device) { try { await chooseDevice(); } catch (e) { renderStatus(); } }
     if (S.settings.autoplay && !S.playing) startStation();
+    if (S.settings.carAuto !== false && hasScope('playlist-modify-private') && Date.now() - (S.settings.carUpdated || 0) > 3 * 3600000)
+      setTimeout(() => updateCarPlaylists(() => {}), 5000);
   }
   if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
 }
