@@ -766,7 +766,7 @@ details.fold > *:not(summary){margin-top:6px}
   </div>
 </dialog>
 
-<div class="revtag" aria-hidden="true">P66</div>
+<div class="revtag" aria-hidden="true">P67</div>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script>
@@ -1450,7 +1450,7 @@ async function loadLibrary(progress) {
 /* ---------- Spotify Connect: Knarly picks the songs, the Spotify app plays them ---------- */
 // Knarly hands Spotify a long run of songs at once, so music keeps going with your screen off.
 const BATCH = 40;   // about two and a half hours
-const R = Object.assign({ device: null, batch: [], lastId: null, polling: false, dirty: false, foreign: false, expect: null, expectUntil: 0, topping: false, sonos: null, sonosHelper: null, sonosLog: null, sonosFails: 0 }, { batch: LS.get('batch', []) });
+const R = Object.assign({ device: null, batch: [], lastId: null, polling: false, dirty: false, foreign: false, expect: null, expectUntil: 0, topping: false, sonos: null, sonosHelper: null, sonosLog: null, sonosFails: 0, fromSpotify: false }, { batch: LS.get('batch', []) });
 const isPhone = /Android|iPhone|iPad/i.test(navigator.userAgent);
 const noDevice = () => Object.assign(new Error('Spotify isn’t open. Open the Spotify app, play any song for a moment, then come back and press play.'), { noDevice: true });
 async function getDevices() { const d = await api('/me/player/devices'); DBG.devices = ((d && d.devices) || []).map(x => ({ name: x.name, type: x.type, id: x.id, active: x.is_active, restricted: x.is_restricted })); return (d && d.devices) || []; }
@@ -1515,11 +1515,27 @@ async function sonosTopUp(i) {
 function leaveSonos(dev) {
   R.sonos = null; R.sonosHelper = null; R.sonosFails = 0; R.lastId = null; R.picked = false;
   S.settings.sonosUid = null; LS.set('settings', S.settings);
-  R.device = dev && dev.id ? { id: dev.id, name: dev.name, type: dev.type } : null;
+  R.device = dev && dev.name ? { id: dev.id || null, name: dev.name, type: dev.type } : null;
   renderStatus();
 }
+// Asks Spotify where it is playing right now and makes that Knarly's device.
+// Runs before every Play, Next and station start, so a button never goes to an old device.
+async function syncActiveDevice() {
+  if (S.mode !== 'spotify' || !S.auth) return;
+  const sp = await api('/me/player?additional_types=track').catch(() => null);
+  if (!(sp && sp.is_playing && sp.device && sp.device.name)) return;
+  const d = sp.device;
+  if (R.sonos) {
+    if (d.name === (R.device && R.device.name)) return;   // that's the Sonos speaker Knarly is already using
+    leaveSonos(d);
+  }
+  R.device = { id: d.id || null, name: d.name, type: d.type };
+  R.fromSpotify = true; renderStatus();
+}
+const devQ = (sep = '?') => (R.device && R.device.id ? `${sep}device_id=${encodeURIComponent(R.device.id)}` : '');   // no ID: Spotify uses the device that's playing
 async function chooseDevice() {
   if (R.sonos) return R.device;
+  if (R.fromSpotify && S.playing && R.device) return R.device;   // follow what Spotify is playing
   const list = await getDevices();
   if (!list.length) throw noDevice();
   // Order: whatever Spotify is playing on right now, then this phone or computer,
@@ -1563,11 +1579,11 @@ async function playIds(ids, positionMs = 0, startAt = 0) {
     const payload = { uris: ids.map(id => S.byId.get(id).uri), position_ms: Math.max(0, Math.round(positionMs)) };
     if (startAt > 0) payload.offset = { position: startAt };
     const body = JSON.stringify(payload);
-    try { await api(`/me/player/play?device_id=${encodeURIComponent(R.device.id)}`, { method: 'PUT', body }); }
+    try { await api(`/me/player/play${devQ()}`, { method: 'PUT', body }); }
     catch (e) {
       if (e.status !== 404) throw e;
       R.device = null; await chooseDevice();   // the device went to sleep; find it again
-      await api(`/me/player/play?device_id=${encodeURIComponent(R.device.id)}`, { method: 'PUT', body });
+      await api(`/me/player/play${devQ()}`, { method: 'PUT', body });
     }
   }
   R.batch = ids; if (!startAt) R.dirty = false; R.foreign = false; R.lastId = ids[startAt];
@@ -1580,6 +1596,7 @@ async function playIds(ids, positionMs = 0, startAt = 0) {
   renderNow(); renderNext(); setTimeout(poll, 1500);
 }
 async function startStation() {
+  await syncActiveDevice();
   const st = S.stations[S.current]; R.custom = false;
   if (!mixFor(st).pool.length) { toast(`No ${st.genre} songs yet. Tag some under Library & stations.`); return; }
   // Songs you lined up before pressing play go first.
@@ -1601,6 +1618,7 @@ async function refreshBatch(i, progressMs) {
 }
 async function remoteToggle() {
   if (!S.auth) { openLogin(); return; }
+  await syncActiveDevice();
   if (!S.np || (R.foreign && !R.expect) || !R.batch.length) return startStation();
   if (R.sonos) {
     try { await sonosApi(S.playing ? '/pause' : '/resume', { uid: R.sonos }); S.playing = !S.playing; renderTransport(); setTimeout(poll, 800); }
@@ -1609,9 +1627,9 @@ async function remoteToggle() {
   }
   try {
     if (!R.device) await chooseDevice();
-    if (S.playing) { await api(`/me/player/pause?device_id=${encodeURIComponent(R.device.id)}`, { method: 'PUT' }); S.playing = false; }
+    if (S.playing) { await api(`/me/player/pause${devQ()}`, { method: 'PUT' }); S.playing = false; }
     else {
-      try { await api(`/me/player/play?device_id=${encodeURIComponent(R.device.id)}`, { method: 'PUT' }); S.playing = true; }
+      try { await api(`/me/player/play${devQ()}`, { method: 'PUT' }); S.playing = true; }
       catch (e) { if (e.noDevice) throw e; return startStation(); }   // the old run finished; start a new one
     }
     renderTransport(); setTimeout(poll, 800);
@@ -1619,6 +1637,7 @@ async function remoteToggle() {
 }
 async function remoteNext() {
   if (!S.auth) { openLogin(); return; }
+  await syncActiveDevice();
   if (!S.np || (R.foreign && !R.expect) || !R.batch.length) return startStation();
   if (R.sonos) {
     try { await sonosApi('/next', { uid: R.sonos }); setTimeout(poll, 900); } catch (e) { toast(sonosErr(e)); }
@@ -1626,7 +1645,7 @@ async function remoteNext() {
   }
   try {
     if (!R.device) await chooseDevice();
-    await api(`/me/player/next?device_id=${encodeURIComponent(R.device.id)}`, { method: 'POST' });
+    await api(`/me/player/next${devQ()}`, { method: 'POST' });
     setTimeout(poll, 700);
   } catch (e) { if (e.noDevice) handleRemoteError(e); else startStation(); }
 }
@@ -1641,7 +1660,7 @@ async function poll() {
     let st;
     if (R.sonos) {
       const sp = await api('/me/player?additional_types=track').catch(() => null);
-      if (sp && sp.is_playing && sp.device && sp.device.id && sp.device.name !== (R.device && R.device.name)) {
+      if (sp && sp.is_playing && sp.device && sp.device.name && sp.device.name !== (R.device && R.device.name)) {
         leaveSonos(sp.device);
         toast(`Spotify is playing on ${sp.device.name}, so Knarly switched to it.`);
         st = sp;
@@ -1652,7 +1671,7 @@ async function poll() {
     } else st = await api('/me/player?additional_types=track');
     DBG.poll = st ? { playingOn: st.device && st.device.name, deviceId: st.device && st.device.id, isPlaying: st.is_playing, song: st.item && st.item.name } : 'Spotify reports nothing playing';
     if (!st || !st.item) { S.playing = false; renderTransport(); return; }
-    if (st.device && st.device.id) { R.device = { id: st.device.id, name: st.device.name, type: st.device.type }; renderStatus(); }
+    if (st.device && (st.device.id || st.device.name)) { R.device = { id: st.device.id || null, name: st.device.name, type: st.device.type }; if (!R.sonos) R.fromSpotify = !!st.is_playing; renderStatus(); }
     const it = st.item;
     if (R.expect) {
       if (it.id === R.expect || Date.now() > R.expectUntil) R.expect = null;
@@ -2427,7 +2446,7 @@ function bind() {
   $('#devVolRange').addEventListener('change', async e => {
     if (!R.device) return;
     if (R.sonos) { try { await sonosApi('/volume', { uid: R.sonos, volume: +e.target.value }); } catch (err) { toast(sonosErr(err)); } return; }
-    try { await api(`/me/player/volume?device_id=${encodeURIComponent(R.device.id)}&volume_percent=${+e.target.value}`, { method: 'PUT' }); }
+    try { await api(`/me/player/volume?volume_percent=${+e.target.value}${devQ('&')}`, { method: 'PUT' }); }
     catch (err) { toast(err.message.includes('volume') ? 'This speaker doesn’t let Spotify change its volume. Use the speaker’s own controls or the Spotify app.' : err.message); }
   });
 
