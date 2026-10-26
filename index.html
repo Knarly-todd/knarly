@@ -766,7 +766,7 @@ details.fold > *:not(summary){margin-top:6px}
   </div>
 </dialog>
 
-<div class="revtag" aria-hidden="true">P67</div>
+<div class="revtag" aria-hidden="true">P68</div>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script>
@@ -1450,7 +1450,7 @@ async function loadLibrary(progress) {
 /* ---------- Spotify Connect: Knarly picks the songs, the Spotify app plays them ---------- */
 // Knarly hands Spotify a long run of songs at once, so music keeps going with your screen off.
 const BATCH = 40;   // about two and a half hours
-const R = Object.assign({ device: null, batch: [], lastId: null, polling: false, dirty: false, foreign: false, expect: null, expectUntil: 0, topping: false, sonos: null, sonosHelper: null, sonosLog: null, sonosFails: 0, fromSpotify: false }, { batch: LS.get('batch', []) });
+const R = Object.assign({ device: null, batch: [], lastId: null, polling: false, dirty: false, foreign: false, expect: null, expectUntil: 0, topping: false, sonos: null, sonosHelper: null, sonosLog: null, sonosFails: 0, fromSpotify: false, liveNow: false }, { batch: LS.get('batch', []) });
 const isPhone = /Android|iPhone|iPad/i.test(navigator.userAgent);
 const noDevice = () => Object.assign(new Error('Spotify isn’t open. Open the Spotify app, play any song for a moment, then come back and press play.'), { noDevice: true });
 async function getDevices() { const d = await api('/me/player/devices'); DBG.devices = ((d && d.devices) || []).map(x => ({ name: x.name, type: x.type, id: x.id, active: x.is_active, restricted: x.is_restricted })); return (d && d.devices) || []; }
@@ -1523,6 +1523,7 @@ function leaveSonos(dev) {
 async function syncActiveDevice() {
   if (S.mode !== 'spotify' || !S.auth) return;
   const sp = await api('/me/player?additional_types=track').catch(() => null);
+  R.liveNow = !!(sp && sp.is_playing);
   if (!(sp && sp.is_playing && sp.device && sp.device.name)) return;
   const d = sp.device;
   if (R.sonos) {
@@ -1530,9 +1531,11 @@ async function syncActiveDevice() {
     leaveSonos(d);
   }
   R.device = { id: d.id || null, name: d.name, type: d.type };
-  R.fromSpotify = true; renderStatus();
+  R.fromSpotify = true; R.liveNow = true; renderStatus();
 }
-const devQ = (sep = '?') => (R.device && R.device.id ? `${sep}device_id=${encodeURIComponent(R.device.id)}` : '');   // no ID: Spotify uses the device that's playing
+// Names the device only when Knarly is starting music somewhere new. While Spotify is already playing,
+// commands leave the device out so Spotify keeps the sound where it is (for example, Android Auto through the phone).
+const devQ = (sep = '?') => (R.device && R.device.id && !(R.fromSpotify && R.liveNow) ? `${sep}device_id=${encodeURIComponent(R.device.id)}` : '');
 async function chooseDevice() {
   if (R.sonos) return R.device;
   if (R.fromSpotify && S.playing && R.device) return R.device;   // follow what Spotify is playing
