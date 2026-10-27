@@ -488,6 +488,9 @@ details.fold > *:not(summary){margin-top:6px}
 .genbtns .btn{min-height:44px}
 .sendbtn{flex:1 1 100%;min-height:54px!important;font-size:17px;background:#00E5FF!important;color:#0E0F10!important;border-color:#00E5FF!important}
 a#genOpen{display:inline-flex;align-items:center;text-decoration:none}
+.gentarget{flex:1 1 100%;display:flex!important;align-items:center;gap:8px;font-size:14px;font-weight:600;color:var(--muted);margin:0!important}
+.gentarget select{flex:1;min-height:44px;border:1px solid var(--line);border-radius:10px;background:var(--key);color:var(--ink);padding:0 10px;font-weight:600}
+#nameInput{width:100%;min-height:48px;font-size:17px}
 a#genOpen[hidden],#genReauth[hidden]{display:none!important}
 </style>
 </head>
@@ -556,6 +559,7 @@ a#genOpen[hidden],#genReauth[hidden]{display:none!important}
       <div class="genbox" id="genBox">
         <div class="lenpick" role="radiogroup" aria-label="Playlist length" id="lenPick"></div>
         <div class="genbtns">
+          <label class="gentarget">Send to <select id="genTarget" aria-label="Playlist to send to"></select></label>
           <button class="btn primary sendbtn" id="genSend">Send to Spotify</button>
           <button class="btn" id="genSaveNew">Save as new playlist</button>
           <button class="btn" id="genFresh">Pick fresh songs</button>
@@ -717,6 +721,19 @@ a#genOpen[hidden],#genReauth[hidden]{display:none!important}
   </div>
 </dialog>
 
+<!-- Name a new playlist -->
+<dialog id="nameDlg" aria-labelledby="nameTitle">
+  <div class="dlg">
+    <h2 id="nameTitle">Name your playlist</h2>
+    <p>Keep the suggestion or type your own. You can send fresh mixes to it later from the Send to list.</p>
+    <input type="text" id="nameInput" maxlength="100" autocomplete="off" aria-label="Playlist name">
+    <div class="row">
+      <button class="btn" id="nameCancel">Cancel</button>
+      <button class="btn primary" id="nameSave">Save to Spotify</button>
+    </div>
+  </div>
+</dialog>
+
 <!-- Station lineup -->
 <dialog id="lineup" aria-labelledby="lineupTitle">
   <div class="dlg">
@@ -798,7 +815,7 @@ a#genOpen[hidden],#genReauth[hidden]{display:none!important}
   </div>
 </dialog>
 
-<div class="revtag" aria-hidden="true">P71</div>
+<div class="revtag" aria-hidden="true">P72</div>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script>
@@ -1310,7 +1327,7 @@ function togglePlay() {
 }
 function tune(i, autoplay = true) {
   S.current = i; LS.set('current', i);
-  if (GEN_MODE) { renderTiles(); renderGauges(); genGenerate(); return; }
+  if (GEN_MODE) { renderTiles(); renderGauges(); genGenerate(); renderTargets(true); $('#genOpen').hidden = true; return; }
   rebuildQueue(); renderTiles(); renderGauges();
   if (autoplay && S.playing) { if (S.mode === 'spotify') startStation(); else advance(); } else renderNow();
 }
@@ -1428,7 +1445,7 @@ async function findPlaylists() {
       if (!p) continue;
       const mine = (p.owner && p.owner.id === me.id) || p.collaborative;
       const total = (p.items && p.items.total) ?? (p.tracks && p.tracks.total) ?? 0;
-      if (Object.values(carPlaylistIds()).includes(p.id) || /^Knarly /.test(p.name || '')) continue;   // Knarly's own playlists
+      if (Object.values(carPlaylistIds()).includes(p.id) || savedPlaylists().some(x => x.id === p.id) || /^Knarly /.test(p.name || '')) continue;   // Knarly's own playlists
       out.push({ id: p.id, name: p.name, total, mine });
     }
     url = d.next;
@@ -1673,37 +1690,62 @@ async function replacePlaylistItems(pid, uris) {
   for (let k = 100; k < uris.length; k += 100) await api(`/playlists/${pid}/items`, { method: 'POST', body: JSON.stringify({ uris: uris.slice(k, k + 100) }) });
 }
 function genMsg(t, err) { const m = $('#genMsg'); m.className = 'msg' + (err ? ' err' : ''); m.textContent = t; }
-async function sendPlaylist(asNew) {
+// Playlists you named with "Save as new playlist": [{ id, name, station }]
+function savedPlaylists() { if (!Array.isArray(S.settings.savedPlaylists)) S.settings.savedPlaylists = []; return S.settings.savedPlaylists; }
+// A suggested name from the current settings, e.g. "Wide Rock orbit · Deep cuts"
+function suggestName() {
+  const focus = S.current === ALL ? 'All genres' : ($('#specVal').textContent || S.stations[S.current].genre).trim();
+  const pop = ($('#popVal').textContent || '').trim();
+  return pop && pop !== 'Balanced' ? `${focus} · ${pop}` : `${focus} · Balanced`;
+}
+function renderTargets(stationChanged) {
+  const sel = $('#genTarget'); if (!sel) return;
+  const i = S.current, mine = savedPlaylists().filter(x => x.station === i);
+  const keep = stationChanged ? null : sel.value;
+  sel.innerHTML = `<option value="station">${esc(carName(i))} (station playlist)</option>` + mine.map(x => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join('');
+  sel.value = [...sel.options].some(o => o.value === keep) ? keep : (S.settings.lastTarget && S.settings.lastTarget[i] && mine.some(x => x.id === S.settings.lastTarget[i]) ? S.settings.lastTarget[i] : 'station');
+}
+// target: 'station', a saved playlist id, or { newName }
+async function sendPlaylist(target) {
   if (GEN.busy) return;
   if (S.mode !== 'spotify' || !S.auth) { genMsg('Connect Spotify first, then send the playlist.', true); return; }
   if (!hasScope('playlist-modify-private')) { genMsg('Knarly needs permission to save playlists. Tap Reconnect Spotify.', true); $('#genReauth').hidden = false; return; }
   const songs = GEN.ids.map(id => S.byId.get(id)).filter(s => s && s.uri);
   if (!songs.length) { genMsg('No songs to send. This station has no songs yet.', true); return; }
   GEN.busy = true; $('#genSend').disabled = $('#genSaveNew').disabled = true;
-  const i = S.current, ids = carPlaylistIds();
+  const i = S.current, ids = carPlaylistIds(), saved = savedPlaylists();
   const genre = i === ALL ? 'ALL' : S.stations[i].genre;
-  const name = asNew ? `Knarly ${genre} – ${genDate()}` : carName(i);
+  const isNew = typeof target === 'object', isStation = target === 'station';
+  const known = !isNew && !isStation ? saved.find(x => x.id === target) : null;
+  const name = isNew ? target.newName : isStation ? carName(i) : known ? known.name : carName(i);
   const description = `Made by Knarly: ${genre}, ${$('#specVal').textContent || ''}, ${$('#popVal').textContent || ''}. ${new Date().toLocaleString()}. Your music. Your rules.`;
   const uris = songs.map(s => s.uri);
   genMsg(`Sending ${songs.length} songs to Spotify…`);
   try {
-    let pid = asNew ? null : ids[i];
+    let pid = isNew ? null : isStation ? ids[i] : known && known.id;
     if (pid) {
       try {
         await replacePlaylistItems(pid, uris);
-        await api(`/playlists/${pid}`, { method: 'PUT', body: JSON.stringify({ name, description }) }).catch(() => {});
-      } catch (e) { if (e.status !== 404) throw e; delete ids[i]; pid = null; }   // deleted in Spotify: make a new one
+        await api(`/playlists/${pid}`, { method: 'PUT', body: JSON.stringify(isStation ? { name, description } : { description }) }).catch(() => {});
+      } catch (e) {
+        if (e.status !== 404) throw e;
+        if (isStation) { delete ids[i]; pid = null; }   // deleted in Spotify: make a new one
+        else { S.settings.savedPlaylists = saved.filter(x => x.id !== pid); LS.set('settings', S.settings); renderTargets(); throw new Error(`“${name}” was deleted in Spotify. Use Save as new playlist to make it again.`); }
+      }
     }
     if (!pid) {
       const pl = await api('/me/playlists', { method: 'POST', body: JSON.stringify({ name, public: false, description }) });
       pid = pl.id;
-      if (!asNew) { ids[i] = pid; }
+      if (isStation) ids[i] = pid;
+      else saved.push({ id: pid, name, station: i });
       await replacePlaylistItems(pid, uris);
     }
-    if (!asNew) S.settings.carUpdated = Date.now();
+    if (isStation) S.settings.carUpdated = Date.now();
+    S.settings.lastTarget = Object.assign(S.settings.lastTarget || {}, { [i]: isStation ? 'station' : pid });
     LS.set('settings', S.settings);
+    renderTargets(); $('#genTarget').value = isStation ? 'station' : pid;
     const open = $('#genOpen'); open.href = `https://open.spotify.com/playlist/${pid}`; open.hidden = false;
-    genMsg(`Sent “${name}” to Spotify: ${songs.length} songs, ${fmtMin(genTotalMs() / 60000)}.`);
+    genMsg(`${isNew ? 'Saved' : 'Sent'} “${name}” to Spotify: ${songs.length} songs, ${fmtMin(genTotalMs() / 60000)}.`);
   } catch (e) { genMsg(`Couldn’t send the playlist: ${e.message}`, true); }
   finally { GEN.busy = false; $('#genSend').disabled = $('#genSaveNew').disabled = false; }
 }
@@ -2509,8 +2551,18 @@ function bind() {
   const renderLens = () => { $('#lenPick').innerHTML = GEN_LENGTHS.map(m => `<button class="lenbtn" role="radio" aria-checked="${m === genMinutes()}" data-min="${m}">${m / 60} hour${m === 60 ? '' : 's'}</button>`).join(''); };
   renderLens();
   $('#lenPick').addEventListener('click', e => { const b = e.target.closest('[data-min]'); if (!b) return; S.settings.genMinutes = +b.dataset.min; LS.set('settings', S.settings); renderLens(); genGenerate(); });
-  $('#genSend').addEventListener('click', () => sendPlaylist(false));
-  $('#genSaveNew').addEventListener('click', () => sendPlaylist(true));
+  renderTargets();
+  $('#genSend').addEventListener('click', () => sendPlaylist($('#genTarget').value || 'station'));
+  $('#genSaveNew').addEventListener('click', () => { $('#nameInput').value = suggestName(); $('#nameDlg').showModal(); $('#nameInput').select(); });
+  $('#nameCancel').addEventListener('click', () => $('#nameDlg').close());
+  const saveNamed = () => {
+    const n = $('#nameInput').value.trim();
+    if (!n) { $('#nameInput').focus(); return; }
+    $('#nameDlg').close(); sendPlaylist({ newName: n });
+  };
+  $('#nameSave').addEventListener('click', saveNamed);
+  $('#nameInput').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); saveNamed(); } });
+  $('#genTarget').addEventListener('change', e => { S.settings.lastTarget = Object.assign(S.settings.lastTarget || {}, { [S.current]: e.target.value }); LS.set('settings', S.settings); });
   $('#genFresh').addEventListener('click', () => { genGenerate(); genMsg('Fresh picks ready.'); });
   $('#genReauth').addEventListener('click', () => openLogin());
   const carReport = (t, err) => { const m = $('#carMsg'); if (!m) return; m.className = 'msg' + (err ? ' err' : ''); m.textContent = t; $('#carReauth').hidden = !/permission/.test(t); };
