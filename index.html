@@ -477,6 +477,18 @@ details.fold > *:not(summary){margin-top:6px}
   .wrap{padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(20px,env(safe-area-inset-right,0px))}
   .revtag{right:12px}
 }
+
+/* ===== Playlist generator (P71): player controls hidden ===== */
+#pp,#nextBtn,#lineupBtn2,#nowCard,#status,#sonosFold,#testPlaylist,#testQueue,#autoplayChk,label:has(#autoplayChk){display:none!important}
+.genbox{display:grid;gap:10px;margin-top:4px}
+.lenpick{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
+.lenbtn{min-height:44px;border-radius:10px;border:1px solid var(--line);background:var(--key);color:var(--ink);font-weight:700;font-size:14px}
+.lenbtn[aria-checked="true"]{border-color:#00E5FF;color:#00E5FF;background:#062A31}
+.genbtns{display:flex;flex-wrap:wrap;gap:8px}
+.genbtns .btn{min-height:44px}
+.sendbtn{flex:1 1 100%;min-height:54px!important;font-size:17px;background:#00E5FF!important;color:#0E0F10!important;border-color:#00E5FF!important}
+a#genOpen{display:inline-flex;align-items:center;text-decoration:none}
+a#genOpen[hidden],#genReauth[hidden]{display:none!important}
 </style>
 </head>
 <body>
@@ -494,7 +506,7 @@ details.fold > *:not(summary){margin-top:6px}
   </header>
 
   <section class="face" aria-label="Station controls">
-    <div class="card" id="listCol"><h2>Up next</h2><div id="next"></div><div class="row left" style="margin-top:12px"><button class="btn" id="lineupBtn">See full lineup</button></div></div>
+    <div class="card" id="listCol"><h2>Playlist preview</h2><div id="next"></div><div class="row left" style="margin-top:12px"><button class="btn" id="lineupBtn">Edit list</button></div></div>
     <div id="sideCol">
       <div class="side" id="specCol">
       <h2>Genre focus</h2>
@@ -541,6 +553,17 @@ details.fold > *:not(summary){margin-top:6px}
         </div>
       </div>
       <div class="presets" id="presets" role="group" aria-label="Station presets"></div>
+      <div class="genbox" id="genBox">
+        <div class="lenpick" role="radiogroup" aria-label="Playlist length" id="lenPick"></div>
+        <div class="genbtns">
+          <button class="btn primary sendbtn" id="genSend">Send to Spotify</button>
+          <button class="btn" id="genSaveNew">Save as new playlist</button>
+          <button class="btn" id="genFresh">Pick fresh songs</button>
+          <a class="btn" id="genOpen" target="_blank" rel="noopener" hidden>Open in Spotify</a>
+          <button class="btn" id="genReauth" hidden>Reconnect Spotify</button>
+        </div>
+        <div class="msg" id="genMsg" role="status"></div>
+      </div>
       <div class="card" id="nowCard" aria-label="Now playing"></div>
     </div>
 
@@ -655,10 +678,10 @@ details.fold > *:not(summary){margin-top:6px}
     <select id="unratedSel"><option value="1">1★ Ultra-niche</option><option value="2">2★ Cult indie</option><option value="3">3★ Somewhat popular</option><option value="4">4★ Very popular</option><option value="5">5★ Megastar</option></select>
     <label class="chk" style="margin-top:10px!important"><input type="checkbox" id="autoplayChk"> Start playing when the app opens</label>
 
-    <details class="fold" id="carFold"><summary class="foldsum">Car playlists <span class="muted">(Android Auto)</span></summary>
-      <p>Knarly saves each station’s upcoming songs as a private Spotify playlist, such as “Knarly 1 · Rock”. In the car, open Spotify and play one; the car’s own buttons then work as usual. Playlists refresh when Knarly opens (at most every few hours), when you change a station’s dials, and when you tap the button.</p>
-      <label class="chk"><input type="checkbox" id="carAuto"> Keep car playlists updated</label>
-      <div class="row left" style="margin-top:8px"><button class="btn" id="carNow">Update car playlists now</button><button class="btn" id="carReauth" hidden>Reconnect Spotify</button></div>
+    <details class="fold" id="carFold"><summary class="foldsum">All station playlists <span class="muted">(optional)</span></summary>
+      <p>Refreshes every station’s “Knarly” playlist at once (about four hours each), instead of one at a time with Send to Spotify.</p>
+      <label class="chk"><input type="checkbox" id="carAuto"> Refresh all of them when Knarly opens (every few hours)</label>
+      <div class="row left" style="margin-top:8px"><button class="btn" id="carNow">Refresh all station playlists now</button><button class="btn" id="carReauth" hidden>Reconnect Spotify</button></div>
       <div class="msg" id="carMsg" role="status"></div>
     </details>
 
@@ -673,6 +696,8 @@ details.fold > *:not(summary){margin-top:6px}
     <details class="fold" id="diagFold"><summary class="foldsum">Diagnostics <span class="muted">(for troubleshooting)</span></summary>
       <p>Shows what Spotify reports, which devices Knarly can see, and where each command was sent.</p>
       <div class="row left"><button class="btn" id="diagRefresh">Refresh</button><button class="btn" id="diagCopy">Copy</button></div>
+      <p style="margin-top:10px">Playback tests: start a song in the Spotify app first, then tap one test. Start the song again before the other test.</p>
+      <div class="row left"><button class="btn" id="testPlaylist">Test A: play a car playlist</button><button class="btn" id="testQueue">Test B: queue and skip</button></div>
       <pre id="diagOut" style="white-space:pre-wrap;font-size:12px;max-height:50vh;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:10px;margin-top:8px"></pre>
     </details>
 
@@ -773,7 +798,7 @@ details.fold > *:not(summary){margin-top:6px}
   </div>
 </dialog>
 
-<div class="revtag" aria-hidden="true">P69</div>
+<div class="revtag" aria-hidden="true">P71</div>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script>
@@ -1278,12 +1303,14 @@ function advance() {
   start(s); extendQueue();
 }
 function togglePlay() {
+  if (GEN_MODE) return;
   if (S.mode === 'spotify') { remoteToggle(); return; }
   if (!S.np) { advance(); return; }
   S.playing = !S.playing; renderTransport();
 }
 function tune(i, autoplay = true) {
   S.current = i; LS.set('current', i);
+  if (GEN_MODE) { renderTiles(); renderGauges(); genGenerate(); return; }
   rebuildQueue(); renderTiles(); renderGauges();
   if (autoplay && S.playing) { if (S.mode === 'spotify') startStation(); else advance(); } else renderNow();
 }
@@ -1370,8 +1397,10 @@ function dbgLog(path, method) {
 }
 async function api(path, opts = {}, tries = 0) {
   dbgLog(path, opts.method);
+  const logged = path.includes('/me/player') ? DBG.log[DBG.log.length - 1] : null;
   const r = await fetch(path.startsWith('http') ? path : API + path, { ...opts,
     headers: { Authorization: 'Bearer ' + await getToken(), ...(opts.body ? { 'Content-Type': 'application/json' } : {}), ...(opts.headers || {}) } });
+  if (logged) logged.status = r.status;
   if (r.status === 429 && tries < 6) { await sleep((+r.headers.get('Retry-After') || 2) * 1000 + 250); return api(path, opts, tries + 1); }
   if (r.status === 401 && tries < 1) { S.auth.exp = 0; return api(path, opts, tries + 1); }
   if (r.status === 204) return null;
@@ -1399,7 +1428,7 @@ async function findPlaylists() {
       if (!p) continue;
       const mine = (p.owner && p.owner.id === me.id) || p.collaborative;
       const total = (p.items && p.items.total) ?? (p.tracks && p.tracks.total) ?? 0;
-      if (Object.values(carPlaylistIds()).includes(p.id)) continue;   // Knarly's own car playlists
+      if (Object.values(carPlaylistIds()).includes(p.id) || /^Knarly /.test(p.name || '')) continue;   // Knarly's own playlists
       out.push({ id: p.id, name: p.name, total, mine });
     }
     url = d.next;
@@ -1583,20 +1612,20 @@ function picksForStation(i, n) {
 async function updateCarPlaylist(i) {
   const ids = carPlaylistIds();
   if (i !== ALL && !mixFor(S.stations[i]).pool.length) return 'empty';   // no songs on this station yet
-  const songs = picksForStation(i, CAR_SONGS).map(id => S.byId.get(id)).filter(s => s && s.uri);
+  const songs = picksForStation(i, CAR_SONGS).map(id => S.byId.get(id)).filter(s => s && s.uri);   // (used by Refresh all)
   if (!songs.length) return 'empty';
   const desc = `Made by Knarly from your ${i === ALL ? 'whole library' : S.stations[i].genre + ' station'}. Updated ${new Date().toLocaleString()}. Your music. Your rules.`;
   const body = JSON.stringify({ uris: songs.map(s => s.uri) });
   if (ids[i]) {
     try {
-      await api(`/playlists/${ids[i]}/items`, { method: 'PUT', body });
+      await replacePlaylistItems(ids[i], songs.map(s => s.uri));
       await api(`/playlists/${ids[i]}`, { method: 'PUT', body: JSON.stringify({ name: carName(i), description: desc }) }).catch(() => {});
       return 'updated';
     } catch (e) { if (e.status !== 404) throw e; delete ids[i]; }   // the playlist was deleted in Spotify: make a new one
   }
   const pl = await api('/me/playlists', { method: 'POST', body: JSON.stringify({ name: carName(i), public: false, description: desc }) });
   ids[i] = pl.id; LS.set('settings', S.settings);
-  await api(`/playlists/${pl.id}/items`, { method: 'PUT', body });
+  await replacePlaylistItems(pl.id, songs.map(s => s.uri));
   return 'created';
 }
 let carBusy = false;
@@ -1617,6 +1646,76 @@ async function updateCarPlaylists(report, only) {
     report(only != null ? `${carName(only)} updated.` : `Updated ${done} car playlist${done === 1 ? '' : 's'}${made ? `, ${made} new` : ''}. In the car, open Spotify and play a "Knarly" playlist.`);
   } catch (e) { report(`Couldn’t update car playlists: ${e.message}`, true); }
   finally { carBusy = false; }
+}
+/* ---------- Playlist generator ----------
+   Knarly picks songs with the station, Genre focus and Popularity settings, shows them as a preview,
+   and sends them to Spotify as a playlist. Spotify (or the Sonos app) does the playing. */
+const GEN_MODE = true;
+const GEN_LENGTHS = [60, 120, 240, 480];   // minutes
+const GEN = { ids: [], busy: false };
+const genMinutes = () => GEN_LENGTHS.includes(S.settings.genMinutes) ? S.settings.genMinutes : 240;
+const genTotalMs = () => GEN.ids.reduce((a, id) => a + ((S.byId.get(id) || {}).dur || 0), 0);
+function genGenerate() {
+  const st = S.stations[S.current];
+  if (S.current !== ALL && !mixFor(st).pool.length) { GEN.ids = []; renderNext(); renderLcd(); return; }
+  const target = genMinutes() * 60000;
+  const ids = picksForStation(S.current, Math.ceil(genMinutes() / 2.5) + 30);
+  const out = []; let t = 0;
+  for (const id of ids) { const s = S.byId.get(id); if (!s) continue; out.push(id); t += s.dur; if (t >= target) break; }
+  GEN.ids = out; renderNext(); renderLcd();
+}
+let genT;
+const genSoon = () => { clearTimeout(genT); genT = setTimeout(genGenerate, 250); };
+const genDate = () => new Date().toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+// Spotify accepts 100 songs per request: replace with the first 100, then add the rest.
+async function replacePlaylistItems(pid, uris) {
+  await api(`/playlists/${pid}/items`, { method: 'PUT', body: JSON.stringify({ uris: uris.slice(0, 100) }) });
+  for (let k = 100; k < uris.length; k += 100) await api(`/playlists/${pid}/items`, { method: 'POST', body: JSON.stringify({ uris: uris.slice(k, k + 100) }) });
+}
+function genMsg(t, err) { const m = $('#genMsg'); m.className = 'msg' + (err ? ' err' : ''); m.textContent = t; }
+async function sendPlaylist(asNew) {
+  if (GEN.busy) return;
+  if (S.mode !== 'spotify' || !S.auth) { genMsg('Connect Spotify first, then send the playlist.', true); return; }
+  if (!hasScope('playlist-modify-private')) { genMsg('Knarly needs permission to save playlists. Tap Reconnect Spotify.', true); $('#genReauth').hidden = false; return; }
+  const songs = GEN.ids.map(id => S.byId.get(id)).filter(s => s && s.uri);
+  if (!songs.length) { genMsg('No songs to send. This station has no songs yet.', true); return; }
+  GEN.busy = true; $('#genSend').disabled = $('#genSaveNew').disabled = true;
+  const i = S.current, ids = carPlaylistIds();
+  const genre = i === ALL ? 'ALL' : S.stations[i].genre;
+  const name = asNew ? `Knarly ${genre} – ${genDate()}` : carName(i);
+  const description = `Made by Knarly: ${genre}, ${$('#specVal').textContent || ''}, ${$('#popVal').textContent || ''}. ${new Date().toLocaleString()}. Your music. Your rules.`;
+  const uris = songs.map(s => s.uri);
+  genMsg(`Sending ${songs.length} songs to Spotify…`);
+  try {
+    let pid = asNew ? null : ids[i];
+    if (pid) {
+      try {
+        await replacePlaylistItems(pid, uris);
+        await api(`/playlists/${pid}`, { method: 'PUT', body: JSON.stringify({ name, description }) }).catch(() => {});
+      } catch (e) { if (e.status !== 404) throw e; delete ids[i]; pid = null; }   // deleted in Spotify: make a new one
+    }
+    if (!pid) {
+      const pl = await api('/me/playlists', { method: 'POST', body: JSON.stringify({ name, public: false, description }) });
+      pid = pl.id;
+      if (!asNew) { ids[i] = pid; }
+      await replacePlaylistItems(pid, uris);
+    }
+    if (!asNew) S.settings.carUpdated = Date.now();
+    LS.set('settings', S.settings);
+    const open = $('#genOpen'); open.href = `https://open.spotify.com/playlist/${pid}`; open.hidden = false;
+    genMsg(`Sent “${name}” to Spotify: ${songs.length} songs, ${fmtMin(genTotalMs() / 60000)}.`);
+  } catch (e) { genMsg(`Couldn’t send the playlist: ${e.message}`, true); }
+  finally { GEN.busy = false; $('#genSend').disabled = $('#genSaveNew').disabled = false; }
+}
+function renderGen() {
+  const el = $('#next'); if (!el) return;
+  const st = S.stations[S.current];
+  if (!GEN.ids.length) { el.innerHTML = `<p class="muted" style="margin:0">${S.current !== ALL && !mixFor(st).pool.length ? 'No songs on this station yet. Tag some under Library & stations.' : 'Building the playlist…'}</p>`; return; }
+  el.innerHTML = `<p class="muted" style="margin:0 0 6px;font-size:13px">${GEN.ids.length} songs · ${fmtMin(genTotalMs() / 60000)}</p>` + GEN.ids.map((id, n) => {
+    const s = S.byId.get(id); if (!s) return '';
+    const other = s.genre !== st.genre && !st.all ? `, ${esc(s.genre)}` : '';
+    return `<div class="qrow"><div style="min-width:0"><div class="tt">${n + 1}. ${esc(s.title)}</div><div class="aa">${esc(s.artist)}${other}</div></div><div class="k">${STARS(starsOf(s))}</div></div>`;
+  }).join('');
 }
 function buildBatch(n, t, seedHist, keep) {
   const st = S.stations[S.current], mix = mixFor(st), iv = intervals(st.dial);
@@ -1656,6 +1755,7 @@ async function playIds(ids, positionMs = 0, startAt = 0) {
   renderNow(); renderNext(); setTimeout(poll, 1500);
 }
 async function startStation() {
+  if (GEN_MODE) { genGenerate(); return; }
   await syncActiveDevice();
   const st = S.stations[S.current]; R.custom = false;
   if (!mixFor(st).pool.length) { toast(`No ${st.genre} songs yet. Tag some under Library & stations.`); return; }
@@ -1677,6 +1777,7 @@ async function refreshBatch(i, progressMs) {
   try { await playIds(ids, progressMs + 300); } catch (e) { handleRemoteError(e); }
 }
 async function remoteToggle() {
+  if (GEN_MODE) return;
   if (!S.auth) { openLogin(); return; }
   await syncActiveDevice();
   if (!S.np || (R.foreign && !R.expect) || !R.batch.length) return startStation();
@@ -1696,6 +1797,7 @@ async function remoteToggle() {
   } catch (e) { handleRemoteError(e); }
 }
 async function remoteNext() {
+  if (GEN_MODE) return;
   if (!S.auth) { openLogin(); return; }
   await syncActiveDevice();
   if (!S.np || (R.foreign && !R.expect) || !R.batch.length) return startStation();
@@ -1714,6 +1816,7 @@ const extSong = it => ({ id: it.id, key: it.id, title: it.name, artist: (it.arti
   url: (it.external_urls || {}).spotify || '', genre: '', also: [], dur: it.duration_ms, ext: true });
 // Check what Spotify is playing. Runs every few seconds while Knarly is on screen.
 async function poll() {
+  if (GEN_MODE) return;   // Knarly no longer controls playback
   if (S.mode !== 'spotify' || !S.auth || R.polling) return;
   R.polling = true;
   try {
@@ -1788,6 +1891,7 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 const L = { ids: [], changed: false, useQueue: false };
 const playingRemote = () => S.mode === 'spotify' && S.np && !R.foreign && R.batch.length && R.batch.includes(S.np.id);
 function lineupSource() {
+  if (GEN_MODE) return GEN.ids.slice();
   if (playingRemote()) return R.batch.slice(R.batch.indexOf(S.np.id) + 1).filter(id => S.byId.has(id));
   extendQueue(20); return S.queue.slice();
 }
@@ -1843,6 +1947,11 @@ function bindLineupDrag() {
   list.addEventListener('click', e => { const x = e.target.closest('[data-x]'); if (!x) return; L.ids = L.ids.filter(id => id !== x.dataset.x); L.changed = true; renderLineup(); });
 }
 async function saveLineup(silent) {
+  if (GEN_MODE) {
+    GEN.ids = L.ids.slice(); L.changed = false; renderNext(); renderLcd();
+    if (!silent) { $('#lineup').close(); toast('Playlist preview updated. Tap Send to Spotify when ready.'); }
+    return;
+  }
   if (playingRemote()) {
     R.custom = true;
     try { await playIds([S.np.id, ...L.ids], S.np.pos + 300); } catch (e) { handleRemoteError(e); return; }
@@ -1853,6 +1962,7 @@ async function saveLineup(silent) {
   if (!silent) { $('#lineup').close(); toast('Lineup saved.'); }
 }
 function freshLineup() {
+  if (GEN_MODE) { genGenerate(); L.ids = GEN.ids.slice(); L.changed = true; renderLineup(); return; }
   const n = Math.max(L.ids.length, 20);
   if (playingRemote()) {
     const s = S.byId.get(S.np.id), t = Date.now() + Math.max(0, S.np.dur - S.np.pos);
@@ -2055,10 +2165,9 @@ function bindKnob(svg, get, set) {
   svg.addEventListener('wheel', e => { e.preventDefault(); set(get() + (e.deltaY > 0 ? 2 : -2)); }, { passive: false });
 }
 let dialT;
-let carT;
 function dialChanged() {
+  if (GEN_MODE) { genSoon(); return; }
   R.dirty = true; clearTimeout(dialT); dialT = setTimeout(() => { rebuildQueue(); if (!S.np) renderNow(); renderNext(); }, 160);
-  if (S.settings.carAuto !== false && S.settings.carUpdated) { clearTimeout(carT); const i = S.current; carT = setTimeout(() => updateCarPlaylists(() => {}, i), 15000); }
 }
 function setPop(v) { v = Math.round(clamp(v, 0, 100)); const st = S.stations[S.current]; if (st.dial === v) return; st.dial = v; LS.set('stations', S.stations); renderGauges(); dialChanged(); }
 function setSpec(v) { v = Math.round(clamp(v, 0, 100)); const st = S.stations[S.current]; if (st.all) return; if (st.spec === v) return; st.spec = v; LS.set('stations', S.stations); renderGauges(); dialChanged(); }
@@ -2101,6 +2210,11 @@ function renderLcd() {
   const st = S.stations[S.current], s = S.np && (S.np.ext || S.byId.get(S.np.id));
   $('#lcdCh').textContent = S.current === ALL ? 'CH ALL' : 'CH ' + String(S.current + 1).padStart(2, '0');
   $('#lcdGenre').textContent = st.genre || '';
+  if (GEN_MODE) {
+    $('#lcdSong').textContent = GEN.ids.length ? `${GEN.ids.length} songs · ${fmtMin(genTotalMs() / 60000)} playlist` : 'No songs on this station yet';
+    $('#lcdInfo').textContent = `${genMinutes() / 60}H MIX`;
+    return;
+  }
   $('#lcdSong').textContent = s ? `${s.title} · ${s.artist}` : (S.mode === 'spotify' && !S.auth ? 'Connect Spotify to start' : 'Press play');
   const k = s && !s.ext ? STARS(starsOf(s)) + '  ' : '';
   $('#lcdInfo').innerHTML = s ? `${k}<span id="lcdTime">${fmtTime(S.np.pos)}</span>` : '';
@@ -2192,6 +2306,7 @@ async function playFromQueue(id) {
   advance();
 }
 function renderNext() {
+  if (GEN_MODE) return renderGen();
   const st = S.stations[S.current];
   let list = S.queue, note = '';
   if (S.mode === 'spotify' && S.np && !R.foreign && R.batch.length) {
@@ -2390,8 +2505,16 @@ function bind() {
   $('#specRange').addEventListener('input', e => setSpec(+e.target.value));
   $('#popRange').addEventListener('input', e => setPop(+e.target.value));
   bindLineupDrag();
+  // Playlist generator controls
+  const renderLens = () => { $('#lenPick').innerHTML = GEN_LENGTHS.map(m => `<button class="lenbtn" role="radio" aria-checked="${m === genMinutes()}" data-min="${m}">${m / 60} hour${m === 60 ? '' : 's'}</button>`).join(''); };
+  renderLens();
+  $('#lenPick').addEventListener('click', e => { const b = e.target.closest('[data-min]'); if (!b) return; S.settings.genMinutes = +b.dataset.min; LS.set('settings', S.settings); renderLens(); genGenerate(); });
+  $('#genSend').addEventListener('click', () => sendPlaylist(false));
+  $('#genSaveNew').addEventListener('click', () => sendPlaylist(true));
+  $('#genFresh').addEventListener('click', () => { genGenerate(); genMsg('Fresh picks ready.'); });
+  $('#genReauth').addEventListener('click', () => openLogin());
   const carReport = (t, err) => { const m = $('#carMsg'); if (!m) return; m.className = 'msg' + (err ? ' err' : ''); m.textContent = t; $('#carReauth').hidden = !/permission/.test(t); };
-  $('#carAuto').checked = S.settings.carAuto !== false;
+  $('#carAuto').checked = S.settings.carAuto === true;
   $('#carAuto').addEventListener('change', e => { S.settings.carAuto = e.target.checked; LS.set('settings', S.settings); });
   $('#carNow').addEventListener('click', () => updateCarPlaylists(carReport));
   $('#carReauth').addEventListener('click', () => { $('#lib').close(); openLogin(); });
@@ -2449,11 +2572,40 @@ function bind() {
   });
   const renderDiag = () => {
     $('#diagOut').textContent = JSON.stringify({
-      spotifyReportsNow: DBG.poll, devicesSpotifySent: DBG.devices, lastCommandsSent: DBG.log.slice(-12),
+      spotifyReportsNow: DBG.poll, devicesSpotifySent: DBG.devices, playbackTests: DBG.tests || 'none run yet', lastCommandsSent: DBG.log.slice(-12),
       sonos: { helpers: helpers().map(x => ({ name: x.name, url: x.url })), chosenSpeaker: R.sonos ? `${S.settings.sonosName} (${R.sonosHelper})` : 'none', lastReport: SON.lastNow }
     }, null, 2);
   };
   $('#diagRefresh').addEventListener('click', () => { renderDiag(); });
+  // What Spotify reports a few seconds after a test command
+  const afterTest = async (name, expect) => {
+    await sleep(3500);
+    const st = await api('/me/player?additional_types=track').catch(e => ({ error: e.message }));
+    const res = st && st.item ? { playing: st.is_playing, song: st.item.name, on: st.device && st.device.name, context: st.context && st.context.uri, expectedSong: expect, worked: !!(st.is_playing && (!expect || st.item.name === expect)) }
+      : { playing: false, song: null, error: st && st.error, expectedSong: expect, worked: false };
+    DBG.tests = Object.assign(DBG.tests || {}, { [name]: res });
+    renderDiag();
+    toast(`${name}: ${res.worked ? 'worked' : 'did not work'}. Tap Copy and send the text.`);
+  };
+  $('#testPlaylist').addEventListener('click', async () => {
+    const ids = carPlaylistIds(), i = ids[S.current] != null ? S.current : Object.keys(ids)[0];
+    if (i == null) { toast('Make the car playlists first: Library → Car playlists → Update car playlists now.'); return; }
+    toast('Test A running…');
+    try { await api('/me/player/play', { method: 'PUT', body: JSON.stringify({ context_uri: 'spotify:playlist:' + ids[i] }) }); }
+    catch (e) { DBG.tests = Object.assign(DBG.tests || {}, { 'Test A (playlist)': { error: e.message, status: e.status } }); renderDiag(); return; }
+    afterTest('Test A (playlist)', null);
+  });
+  $('#testQueue').addEventListener('click', async () => {
+    const s = S.byId.get(picksForStation(S.current === ALL ? ALL : S.current, 1)[0]);
+    if (!s) { toast('No song to test with on this station.'); return; }
+    toast('Test B running…');
+    try {
+      await api(`/me/player/queue?uri=${encodeURIComponent(s.uri)}`, { method: 'POST' });
+      await sleep(600);
+      await api('/me/player/next', { method: 'POST' });
+    } catch (e) { DBG.tests = Object.assign(DBG.tests || {}, { 'Test B (queue)': { error: e.message, status: e.status, song: s.title } }); renderDiag(); return; }
+    afterTest('Test B (queue)', s.title);
+  });
   $('#diagFold').addEventListener('toggle', e => { if (e.target.open) renderDiag(); });
   $('#diagCopy').addEventListener('click', async () => { renderDiag(); try { await navigator.clipboard.writeText($('#diagOut').textContent); toast('Diagnostics copied.'); } catch (e) { toast('Select the text in the box and copy it.'); } });
   $('#next').addEventListener('click', e => { const r = e.target.closest('[data-play]'); if (r) playFromQueue(r.dataset.play); });
@@ -2734,6 +2886,12 @@ async function init() {
   if (needLoad) { connectFlow(false); return; }
   if (S.mode === 'spotify') {
     if (!hasScope('user-read-recently-played')) { openLogin(); $('#loginMsg').textContent = 'Knarly needs one more Spotify permission. Press Sign in with Spotify.'; return; }
+    if (GEN_MODE) {
+      syncRecent(); genGenerate();
+      if (S.settings.carAuto === true && hasScope('playlist-modify-private') && Date.now() - (S.settings.carUpdated || 0) > 3 * 3600000)
+        setTimeout(() => updateCarPlaylists(() => {}), 5000);
+      return;
+    }
     const savedHelper = helperByName(S.settings.sonosHelper) || helpers()[0];
     const spNow = savedHelper && S.settings.sonosUid ? await api('/me/player?additional_types=track').catch(() => null) : null;
     const spotifyBusy = !!(spNow && spNow.is_playing && spNow.device && spNow.device.id);
